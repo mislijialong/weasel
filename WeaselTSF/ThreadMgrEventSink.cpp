@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "WeaselTSF.h"
+#include "CandidateList.h"
 
 STDAPI WeaselTSF::OnInitDocumentMgr(ITfDocumentMgr* pDocMgr) {
   return S_OK;
@@ -19,6 +20,9 @@ STDAPI WeaselTSF::OnSetFocus(ITfDocumentMgr* pDocMgrFocus,
       SUCCEEDED(pTfContext->GetDocumentMgr(&pCandidateListDocumentMgr))) {
     if (pCandidateListDocumentMgr != pDocMgrFocus) {
       _HideUI();
+      if (_cand != nullptr && _cand->IsPredictionOnlyComposition()) {
+        _AbortComposition();
+      }
     } else {
       _ShowUI();
     }

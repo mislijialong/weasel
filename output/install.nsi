@@ -292,6 +292,10 @@ program_files:
   SetOutPath $INSTDIR\data\preview
   File "data\preview\*.png"
 
+  ; merge local rime-ice package into user folder
+  SetOutPath "$APPDATA\Rime"
+  File /r /x ".git" /x ".git\*" "..\rime-ice\*"
+
   SetOutPath $INSTDIR
 
   ; test /T flag for zh_TW locale

@@ -8,6 +8,18 @@ if exist env.bat call env.bat
 
 if not defined WEASEL_ROOT set WEASEL_ROOT=%CD%
 
+set "VSWHERE_EXE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+set VS_INSTALL_VERSION=
+set VS_MAJOR=
+if exist "%VSWHERE_EXE%" (
+  for /f "usebackq delims=" %%i in (`"%VSWHERE_EXE%" -latest -products * -property installationVersion 2^>nul`) do (
+    set VS_INSTALL_VERSION=%%i
+  )
+)
+if defined VS_INSTALL_VERSION (
+  for /f "tokens=1 delims=." %%i in ("%VS_INSTALL_VERSION%") do set VS_MAJOR=%%i
+)
+
 if not defined VERSION_MAJOR set VERSION_MAJOR=0
 if not defined VERSION_MINOR set VERSION_MINOR=17
 if not defined VERSION_PATCH set VERSION_PATCH=4
@@ -69,7 +81,73 @@ if not defined PLATFORM_TOOLSET (
   set PLATFORM_TOOLSET=v142
 )
 
+set CMAKE_GENERATOR_SANITIZED=
+if defined CMAKE_GENERATOR call set "CMAKE_GENERATOR_SANITIZED=%%CMAKE_GENERATOR:"=%%"
+if defined CMAKE_GENERATOR (
+  if defined CMAKE_GENERATOR_SANITIZED (
+    set "CMAKE_GENERATOR=%CMAKE_GENERATOR_SANITIZED%"
+  ) else (
+    set CMAKE_GENERATOR=
+  )
+)
+
+if not defined CMAKE_GENERATOR if defined MSBUILD_PATH call :resolve_cmake_generator_from_msbuild_path
+
+if not defined CMAKE_GENERATOR (
+  if "%VS_MAJOR%" == "16" set CMAKE_GENERATOR=Visual Studio 16 2019
+  if "%VS_MAJOR%" == "17" set CMAKE_GENERATOR=Visual Studio 17 2022
+  if "%VS_MAJOR%" == "18" set CMAKE_GENERATOR=Visual Studio 18 2026
+)
+
+if defined VS_INSTALL_VERSION echo VS_INSTALL_VERSION=%VS_INSTALL_VERSION%
+if defined CMAKE_GENERATOR echo CMAKE_GENERATOR=%CMAKE_GENERATOR%
+if defined PLATFORM_TOOLSET echo PLATFORM_TOOLSET=%PLATFORM_TOOLSET%
+if defined BJAM_TOOLSET echo BJAM_TOOLSET=%BJAM_TOOLSET%
+echo.
+
 if defined DEVTOOLS_PATH set PATH=%DEVTOOLS_PATH%%PATH%
+
+rem Setup include paths for ATL/WTL (similar to build_and_package.ps1)
+set "project_include=%WEASEL_ROOT%\include"
+set "project_wtl_include=%WEASEL_ROOT%\include\wtl"
+
+rem Find Windows SDK include path using vswhere or manual search
+set sdk_include=
+set sdk_10_root=
+for /f "delims=" %%i in ('"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VCLibs.140.00.Desktop -find "Windows Kits\10\Include\10.0.*" 2^>nul') do (
+    set sdk_10_root=%%i
+)
+if defined sdk_10_root (
+    for /d %%i in ("%sdk_10_root%.*") do set sdk_include=%%i
+)
+
+rem Fallback: try common SDK locations
+if not defined sdk_include (
+    if exist "D:\Windows Kits\10\Include\10.0.26100.7705" set sdk_include=D:\Windows Kits\10\Include\10.0.26100.7705
+    if exist "C:\Windows Kits\10\Include\10.0.26100.7705" set sdk_include=C:\Windows Kits\10\Include\10.0.26100.7705
+    if exist "D:\Windows Kits\10\Include\10.0.22621.0" set sdk_include=D:\Windows Kits\10\Include\10.0.22621.0
+    if exist "C:\Windows Kits\10\Include\10.0.22621.0" set sdk_include=C:\Windows Kits\10\Include\10.0.22621.0
+)
+
+if defined sdk_include (
+    echo Using SDK include: %sdk_include%
+    set "atl_include=%sdk_include%\atl"
+    set "um_include=%sdk_include%\um"
+    set "shared_include=%sdk_include%\shared"
+) else (
+    echo Warning: Windows SDK not found, ATL headers may be missing
+    set atl_include=
+    set um_include=
+    set shared_include=
+)
+
+rem Build INCLUDE path
+set "build_include=%project_include%;%project_wtl_include%"
+if defined atl_include set "build_include=%build_include%;%atl_include%"
+if defined um_include set "build_include=%build_include%;%um_include%"
+if defined shared_include set "build_include=%build_include%;%shared_include%"
+if defined INCLUDE set "build_include=%build_include%;%INCLUDE%"
+set INCLUDE=%build_include%
 
 set build_config=Release
 set build_option=/t:Build
@@ -145,6 +223,20 @@ if %build_rime% == 1 (
   if not exist librime\build.bat (
     git submodule update --init --recursive
   )
+  if defined LIBRIME_PREDICT_ROOT (
+    call :sync_librime_predict
+    if errorlevel 1 exit /b 1
+  )
+
+  rem install lua plugin before building librime
+  set RIME_PLUGINS=hchunhui/librime-lua
+  pushd %WEASEL_ROOT%\librime
+  call action-install-plugins-windows.bat
+  popd
+  if errorlevel 1 (
+    echo Warning: failed to install rime plugins, continuing...
+  )
+
   cd %WEASEL_ROOT%\librime
   rem clean cache before building
   for %%a in ( build dist lib ^
@@ -285,6 +377,45 @@ rem build boost
   exit /b
 
 rem ---------------------------------------------------------------------------
+:sync_librime_predict
+  if not defined LIBRIME_PREDICT_ROOT exit /b 0
+  if not exist "%LIBRIME_PREDICT_ROOT%\CMakeLists.txt" (
+    echo Error: LIBRIME_PREDICT_ROOT is invalid: %LIBRIME_PREDICT_ROOT%
+    exit /b 1
+  )
+  set "predict_dst=%WEASEL_ROOT%\librime\plugins\predict"
+  if not exist "%predict_dst%" mkdir "%predict_dst%"
+  echo Syncing librime-predict from %LIBRIME_PREDICT_ROOT%
+  robocopy "%LIBRIME_PREDICT_ROOT%" "%predict_dst%" /E /R:2 /W:1 /NP /NFL /NDL /NJH /NJS /XD .git .github .claude >nul
+  if errorlevel 8 (
+    echo Error: failed to sync librime-predict.
+    exit /b 1
+  )
+  exit /b 0
+
+rem ---------------------------------------------------------------------------
+:resolve_cmake_generator_from_msbuild_path
+  setlocal EnableDelayedExpansion
+  set "msbuild_path_local=%MSBUILD_PATH%"
+  echo(!msbuild_path_local! | findstr /I /C:"2019" >nul
+  if not errorlevel 1 (
+    endlocal & set CMAKE_GENERATOR=Visual Studio 16 2019
+    exit /b 0
+  )
+  echo(!msbuild_path_local! | findstr /I /C:"2022" >nul
+  if not errorlevel 1 (
+    endlocal & set CMAKE_GENERATOR=Visual Studio 17 2022
+    exit /b 0
+  )
+  echo(!msbuild_path_local! | findstr /I /C:"2026" >nul
+  if not errorlevel 1 (
+    endlocal & set CMAKE_GENERATOR=Visual Studio 18 2026
+    exit /b 0
+  )
+  endlocal
+  exit /b 0
+
+rem ---------------------------------------------------------------------------
 :build_data
   copy %WEASEL_ROOT%\LICENSE.txt output\
   copy %WEASEL_ROOT%\README.md output\README.txt
@@ -338,6 +469,14 @@ rem %3 : target_path of rime.dll, base %WEASEL_ROOT% or abs path
 :build_librime_platform
   rem restore backuped %1 build
   call :stash_build %1 pop
+
+  rem clear stale CMake caches so generator/toolset switches don't fail
+  if exist %WEASEL_ROOT%\librime\build\CMakeCache.txt del /f /q %WEASEL_ROOT%\librime\build\CMakeCache.txt
+  if exist %WEASEL_ROOT%\librime\build\CMakeFiles rd /s /q %WEASEL_ROOT%\librime\build\CMakeFiles
+  for %%d in (deps\glog deps\googletest deps\leveldb deps\marisa-trie deps\opencc deps\yaml-cpp) do (
+    if exist %WEASEL_ROOT%\librime\%%d\build\CMakeCache.txt del /f /q %WEASEL_ROOT%\librime\%%d\build\CMakeCache.txt
+    if exist %WEASEL_ROOT%\librime\%%d\build\CMakeFiles rd /s /q %WEASEL_ROOT%\librime\%%d\build\CMakeFiles
+  )
 
   cd %WEASEL_ROOT%\librime
   if not exist env.bat (

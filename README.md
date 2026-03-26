@@ -15,8 +15,8 @@
 
 您可能還需要 RIME 用於其他操作系統的發行版：
 
-  * ibus-rime、fcitx5-rime 或 fcitx-rime 用於 Linux
-  * 【鼠鬚管】用於 macOS （64位）
+* ibus-rime、fcitx5-rime 或 fcitx-rime 用於 Linux
+* 【鼠鬚管】用於 macOS （64位）
 
 安裝輸入法
 ----------
@@ -34,7 +34,7 @@
 
 選取輸入法指示器菜單裏的【中】字樣圖標，開始用小狼毫寫字。
 
-可通過快捷鍵 <kbd>Ctrl+`</kbd> 或 <kbd>F4</kbd> 呼出方案選單、切換輸入方式。
+可通過快捷鍵 `<kbd>`Ctrl+``</kbd>` 或 `<kbd>`F4`</kbd>` 呼出方案選單、切換輸入方式。
 
 定製輸入法
 ----------
@@ -52,62 +52,62 @@
 
 ### 輸入方案設計：
 
-  * 【朙月拼音】系列及【八股文】詞典
-    - 部分數據來源於 CC-CEDICT、Android 拼音、新酷音、opencc 等開源項目
-    - 維護者：佛振、瑾昀
-  * 【注音／地球拼音】
-    - 維護者：佛振、瑾昀
-  * 【倉頡五代】
-    - 發明人：朱邦復先生
-    - 碼表源自 www.chinesecj.com
-    - 構詞碼表作者：惜緣
+* 【朙月拼音】系列及【八股文】詞典
+  - 部分數據來源於 CC-CEDICT、Android 拼音、新酷音、opencc 等開源項目
+  - 維護者：佛振、瑾昀
+* 【注音／地球拼音】
+  - 維護者：佛振、瑾昀
+* 【倉頡五代】
+  - 發明人：朱邦復先生
+  - 碼表源自 www.chinesecj.com
+  - 構詞碼表作者：惜緣
 
   【五笔】【粵拼】【上海／蘇州吳語】【中古漢語拼音】【國際音標】等衆多方案
-  不再以安裝包預裝形式提供。可由 <https://github.com/rime/plum> 下載安裝。
+  不再以安裝包預裝形式提供。可由 [https://github.com/rime/plum](https://github.com/rime/plum) 下載安裝。
 
 ### 程序設計：
 
-  * [佛振](https://github.com/lotem)
-  * [鄒旭](https://github.com/zouxu09)
-  * [Xiangyan Sun](https://github.com/wishstudio)
-  * [Prcuvu](https://github.com/Prcuvu)
-  * [nameoverflow](https://github.com/nameoverflow)
-  * [fxliang](https://github.com/fxliang)
-  * [Azuk 443](https://github.com/determ1ne)
+* [佛振](https://github.com/lotem)
+* [鄒旭](https://github.com/zouxu09)
+* [Xiangyan Sun](https://github.com/wishstudio)
+* [Prcuvu](https://github.com/Prcuvu)
+* [nameoverflow](https://github.com/nameoverflow)
+* [fxliang](https://github.com/fxliang)
+* [Azuk 443](https://github.com/determ1ne)
 
   查看更多 [代碼貢獻者](https://github.com/rime/weasel/graphs/contributors)
 
 ### 美術：
 
-  * 圖標設計／[Patricivs](https://github.com/Patricivs)
-  * 配色方案／Aben、P1461、Patricivs、skoj、佛振、五磅兔
+* 圖標設計／[Patricivs](https://github.com/Patricivs)
+* 配色方案／Aben、P1461、Patricivs、skoj、佛振、五磅兔
 
 ### 本品引用了以下開源軟件：
 
-  * [Boost C++ Libraries](http://www.boost.org/) (Boost Software License)
-  * [curl](https://curl.haxx.se/) (MIT/X derivate license)
-  * [google-glog](https://github.com/google/glog) (BSD 3-Clause License)
-  * [Google Test](https://github.com/google/googletest) (BSD 3-Clause License)
-  * [LevelDB](https://github.com/google/leveldb) (BSD 3-Clause License)
-  * [librime](https://github.com/rime/librime) (BSD 3-Clause License)
-  * [marisa-trie](https://github.com/s-yata/marisa-trie) (BSD 2-Clause License, LGPL 2.1)
-  * [OpenCC / 開放中文轉換](https://github.com/BYVoid/OpenCC) (Apache License 2.0)
-  * [plum](https://github.com/rime/plum) (GNU Lesser General Public License v3.0)
-  * [WinSparkle](https://github.com/vslavik/winsparkle) (MIT License)
-  * [yaml-cpp](https://github.com/jbeder/yaml-cpp) (MIT License)
-  * [7-Zip](https://www.7-zip.org) (GNU LGPLv2.1+ with unRAR restriction)
+* [Boost C++ Libraries](http://www.boost.org/) (Boost Software License)
+* [curl](https://curl.haxx.se/) (MIT/X derivate license)
+* [google-glog](https://github.com/google/glog) (BSD 3-Clause License)
+* [Google Test](https://github.com/google/googletest) (BSD 3-Clause License)
+* [LevelDB](https://github.com/google/leveldb) (BSD 3-Clause License)
+* [librime](https://github.com/rime/librime) (BSD 3-Clause License)
+* [marisa-trie](https://github.com/s-yata/marisa-trie) (BSD 2-Clause License, LGPL 2.1)
+* [OpenCC / 開放中文轉換](https://github.com/BYVoid/OpenCC) (Apache License 2.0)
+* [plum](https://github.com/rime/plum) (GNU Lesser General Public License v3.0)
+* [WinSparkle](https://github.com/vslavik/winsparkle) (MIT License)
+* [yaml-cpp](https://github.com/jbeder/yaml-cpp) (MIT License)
+* [7-Zip](https://www.7-zip.org) (GNU LGPLv2.1+ with unRAR restriction)
 
 問題與反饋
 ----------
 
 發現程序有 bug，請到 GitHub 反饋
-<https://github.com/rime/weasel/issues>
+[https://github.com/rime/weasel/issues](https://github.com/rime/weasel/issues)
 
 歡迎提交 pull request
-<https://github.com/rime/weasel/pulls>
+[https://github.com/rime/weasel/pulls](https://github.com/rime/weasel/pulls)
 
 Rime 輸入法（不限於 Windows 平臺）功能、使用方法與配置相關的問題，請反饋到
-<https://github.com/rime/home/issues>
+[https://github.com/rime/home/issues](https://github.com/rime/home/issues)
 
 聯繫方式
 --------
@@ -115,3 +115,5 @@ Rime 輸入法（不限於 Windows 平臺）功能、使用方法與配置相關
 技術交流，歡迎光臨 [Rime 代碼之家](https://github.com/rime/home)，或致信 Rime 開發者 <rimeime@gmail.com>
 
 謝謝！
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build_and_package.ps1

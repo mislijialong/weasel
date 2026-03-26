@@ -3,6 +3,7 @@
 #include "Compartment.h"
 #include <resource.h>
 #include <functional>
+#include <KeyEvent.h>
 #include "ResponseParser.h"
 #include "CandidateList.h"
 #include "LanguageBar.h"
@@ -253,6 +254,22 @@ HRESULT WeaselTSF::_HandleCompartment(REFGUID guidCompartment) {
       _EnableLanguageBar(isOpen);
       _UpdateLanguageBar(_status);
     } else {
+      // Ctrl+Space may toggle via TSF compartment path without going through the
+      // normal key event handler. Try to route a synthetic Ctrl+Space to Rime
+      // first so server-side logic can commit raw preedit before switching mode.
+      const bool switching_to_ascii = !_status.ascii_mode;
+      if (switching_to_ascii && _pEditSessionContext) {
+        const weasel::KeyEvent ctrl_space_event(ibus::space,
+                                                ibus::CONTROL_MASK);
+        if (m_client.ProcessKeyEvent(ctrl_space_event)) {
+          _SetKeyboardOpen(true);
+          if (_pLangBarButton && _pLangBarButton->IsLangBarDisabled()) {
+            _EnableLanguageBar(true);
+          }
+          _UpdateComposition(_pEditSessionContext);
+          return S_OK;
+        }
+      }
       _status.ascii_mode = !_status.ascii_mode;
       _SetKeyboardOpen(true);
       if (_pLangBarButton && _pLangBarButton->IsLangBarDisabled())

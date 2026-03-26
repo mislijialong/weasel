@@ -62,6 +62,7 @@ class CCandidateList : public ITfIntegratableCandidateListUIElement,
     else
       return false;
   }
+  bool IsPredictionOnlyComposition();
 
   weasel::UIStyle& style();
 

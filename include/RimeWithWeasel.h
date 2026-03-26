@@ -1,9 +1,13 @@
 #pragma once
+#include <InputContentStore.h>
 #include <WeaselIPC.h>
 #include <WeaselUI.h>
+#include <atomic>
 #include <map>
-#include <string>
 #include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
 
 #include <rime_api.h>
 
@@ -23,16 +27,131 @@ typedef std::map<std::string, AppOptions, CaseInsensitiveCompare>
     AppOptionsByAppName;
 
 struct SessionStatus {
-  SessionStatus() : style(weasel::UIStyle()), __synced(false), session_id(0) {
+  SessionStatus()
+      : style(weasel::UIStyle()),
+        __synced(false),
+        session_id(0),
+        client_app() {
     RIME_STRUCT(RimeStatus, status);
   }
   weasel::UIStyle style;
   RimeStatus status;
   bool __synced;
   RimeSessionId session_id;
+  std::string client_app;
 };
 typedef std::map<DWORD, SessionStatus> SessionStatusMap;
 typedef DWORD WeaselSessionId;
+
+struct AIAssistantConfig {
+  AIAssistantConfig()
+      : enabled(false),
+        stream(true),
+        login_required(false),
+        debug_dump_context(false),
+        endpoint(),
+        api_key(),
+        model("gpt-5"),
+        debug_dump_path("ai_context_dump.txt"),
+        panel_url(),
+        panel_allowed_origin(),
+        system_prompt(),
+        reasoning_effort("low"),
+        login_url(),
+        login_state_path("ai_login_state.json"),
+        login_token_key("token"),
+        refresh_token_endpoint(),
+        mqtt_url(),
+        mqtt_topic_template("/mqtt/topic/sino/lamp/oauth/token/login/{uuid}"),
+        mqtt_username(),
+        mqtt_password(),
+        mqtt_timeout_ms(120000),
+        max_history_chars(2048),
+        timeout_ms(30000) {}
+  bool enabled;
+  bool stream;
+  bool login_required;
+  bool debug_dump_context;
+  std::string endpoint;
+  std::string api_key;
+  std::string model;
+  std::string debug_dump_path;
+  std::string panel_url;
+  std::string panel_allowed_origin;
+  std::string system_prompt;
+  std::string reasoning_effort;
+  std::string login_url;
+  std::string login_state_path;
+  std::string login_token_key;
+  std::string refresh_token_endpoint;
+  std::string mqtt_url;
+  std::string mqtt_topic_template;
+  std::string mqtt_username;
+  std::string mqtt_password;
+  int mqtt_timeout_ms;
+  int max_history_chars;
+  int timeout_ms;
+};
+
+struct AIPanelInstitutionOption {
+  AIPanelInstitutionOption() : id(), name(), app_key() {}
+  AIPanelInstitutionOption(const std::wstring& option_id,
+                           const std::wstring& option_name,
+                           const std::wstring& option_app_key)
+      : id(option_id), name(option_name), app_key(option_app_key) {}
+  std::wstring id;
+  std::wstring name;
+  std::wstring app_key;
+};
+
+struct AIPanelRuntime {
+  AIPanelRuntime()
+      : panel_hwnd(nullptr),
+        status_hwnd(nullptr),
+        output_hwnd(nullptr),
+        webview_hwnd(nullptr),
+        webview_controller(nullptr),
+        webview(nullptr),
+        request_hwnd(nullptr),
+        confirm_hwnd(nullptr),
+        cancel_hwnd(nullptr),
+        target_hwnd(nullptr),
+        request_id(0),
+        ipc_id(0),
+        context_text(),
+        status_text(),
+        output_text(),
+        institution_options(),
+        selected_institution_id(),
+        webview_ready(false),
+        requesting(false),
+        institutions_loading(false),
+        completed(false),
+        has_error(false) {}
+  HWND panel_hwnd;
+  HWND status_hwnd;
+  HWND output_hwnd;
+  HWND webview_hwnd;
+  void* webview_controller;
+  void* webview;
+  HWND request_hwnd;
+  HWND confirm_hwnd;
+  HWND cancel_hwnd;
+  HWND target_hwnd;
+  uint64_t request_id;
+  WeaselSessionId ipc_id;
+  std::wstring context_text;
+  std::wstring status_text;
+  std::wstring output_text;
+  std::vector<AIPanelInstitutionOption> institution_options;
+  std::wstring selected_institution_id;
+  bool webview_ready;
+  bool requesting;
+  bool institutions_loading;
+  bool completed;
+  bool has_error;
+};
+
 class RimeWithWeaselHandler : public weasel::RequestHandler {
  public:
   RimeWithWeaselHandler(weasel::UI* ui);
@@ -74,7 +193,9 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   void _LoadAppInlinePreeditSet(WeaselSessionId ipc_id,
                                 bool ignore_app_name = false);
   bool _ShowMessage(weasel::Context& ctx, weasel::Status& status);
-  bool _Respond(WeaselSessionId ipc_id, EatLine eat);
+  bool _Respond(WeaselSessionId ipc_id,
+                EatLine eat,
+                const std::wstring* extra_commit = nullptr);
   void _ReadClientInfo(WeaselSessionId ipc_id, LPWSTR buffer);
   void _GetCandidateInfo(weasel::CandidateInfo& cinfo, RimeContext& ctx);
   void _GetStatus(weasel::Status& stat,
@@ -82,6 +203,49 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
                   weasel::Context& ctx);
   void _GetContext(weasel::Context& ctx, RimeSessionId session_id);
   void _UpdateShowNotifications(RimeConfig* config, bool initialize = false);
+  void _LoadAIAssistantConfig(RimeConfig* config);
+  bool _EnsureAIAssistantLogin();
+  bool _ForceAIAssistantRelogin();
+  bool _StartAIAssistantLoginFlow();
+  bool _IsAIAssistantLoggedIn();
+  void _StopAIAssistantLoginFlow();
+  void _RunAIAssistantLoginListener(const std::string& client_id);
+  bool _TryProcessAIAssistantTrigger(weasel::KeyEvent keyEvent,
+                                     WeaselSessionId ipc_id,
+                                     EatLine eat);
+  bool _EnsureAIPanelWindow();
+  bool _OpenAIPanel(WeaselSessionId ipc_id,
+                    HWND target_hwnd,
+                    uint64_t request_id);
+  void _CloseAIPanel();
+  void _DestroyAIPanel();
+  void _SetAIPanelStatus(const std::wstring& status_text);
+  void _ResetAIPanelOutput();
+  void _AppendAIPanelOutput(const std::wstring& chunk);
+  void _CompleteAIPanel(bool has_error, const std::wstring& error_text);
+  void _ResizeAIPanelWebView();
+  void _RequestAIPanelGeneration();
+  void _ConfirmAIPanelOutput();
+  void _CancelAIPanelOutput();
+  void _RefreshAIPanelInstitutionOptions();
+  void _SetAIPanelContextText(const std::wstring& context_text);
+  void _SetAIPanelInstitutionSelection(const std::wstring& institution_id);
+  void _HandleAIPanelWritebackRequest(const std::wstring& text);
+  void _StartAIAssistantStreamRequest(uint64_t request_id,
+                                      const std::wstring& context_text,
+                                      const std::wstring& app_key,
+                                      const std::string& token,
+                                      const std::string& tenant_id);
+  bool _SendTextToTargetWindow(HWND target_hwnd, const std::wstring& text);
+  static LRESULT CALLBACK AIAssistantPanelWndProc(HWND hwnd,
+                                                  UINT msg,
+                                                  WPARAM wParam,
+                                                  LPARAM lParam);
+  void _AppendCommittedText(WeaselSessionId ipc_id, const std::wstring& text);
+  std::wstring _CollectAIAssistantContext(WeaselSessionId ipc_id,
+                                          const std::wstring& current_text);
+  std::wstring _TakePendingCommitText(RimeSessionId session_id);
+  std::string _GetContextCacheKey(WeaselSessionId ipc_id) const;
 
   void _UpdateInlinePreeditStatus(WeaselSessionId ipc_id);
 
@@ -120,4 +284,17 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   bool m_global_ascii_mode;
   int m_show_notifications_time;
   DWORD m_pid;
+  AIAssistantConfig m_ai_config;
+  InputContentStore m_input_content_store;
+  std::thread m_ai_login_thread;
+  std::mutex m_ai_login_mutex;
+  std::atomic<bool> m_ai_login_pending;
+  std::atomic<bool> m_ai_login_stop;
+  std::string m_ai_login_token;
+  std::string m_ai_login_tenant_id;
+  std::string m_ai_login_refresh_token;
+  std::string m_ai_login_client_id;
+  AIPanelRuntime m_ai_panel;
+  std::mutex m_ai_panel_mutex;
+  std::atomic<uint64_t> m_ai_request_seq;
 };

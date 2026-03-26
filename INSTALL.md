@@ -38,6 +38,13 @@ Make sure `BOOST_ROOT` is set to the existing path `X:\path\to\boost_<version>`.
 When using a different version of Visual Studio or platform toolset, un-comment
 lines to set corresponding variables.
 
+If you want to sync a local `librime-predict` checkout into this project
+before building librime, set:
+
+```batch
+set LIBRIME_PREDICT_ROOT=D:\work_2026\librime-predict
+```
+
 Alternatively, start a *Developer Command Prompt* window and set environment
 variables directly in the console, before invocation of `build.bat`:
 

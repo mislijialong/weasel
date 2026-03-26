@@ -404,12 +404,17 @@ STDAPI WeaselTSF::OnCompositionTerminated(TfEditCookie ecWrite,
 }
 
 void WeaselTSF::_AbortComposition(bool clear) {
+  if (_aborting_composition) {
+    return;
+  }
+  _aborting_composition = true;
   m_client.ClearComposition();
   if (_IsComposing()) {
     _EndComposition(_pEditSessionContext, clear);
   }
   _committed = TRUE;
   _cand->Destroy();
+  _aborting_composition = false;
 }
 
 void WeaselTSF::_FinalizeComposition() {

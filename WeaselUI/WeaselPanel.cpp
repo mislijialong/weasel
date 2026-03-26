@@ -522,6 +522,7 @@ LRESULT WeaselPanel::OnMouseLeave(UINT uMsg,
   m_hoverIndex = -1;
   InvalidateRect(&rcw, true);
   m_mouse_entry = false;
+  m_lastMousePos = {-1, -1};
   return 0;
 }
 

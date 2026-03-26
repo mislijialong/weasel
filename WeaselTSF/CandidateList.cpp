@@ -3,6 +3,8 @@
 #include "WeaselTSF.h"
 #include "CandidateList.h"
 #include <KeyEvent.h>
+#include <algorithm>
+#include <cwctype>
 #include <math.h>
 
 using namespace std;
@@ -74,6 +76,9 @@ STDMETHODIMP CCandidateList::GetGUID(GUID* pguid) {
 }
 
 STDMETHODIMP CCandidateList::Show(BOOL showCandidateWindow) {
+  if (!showCandidateWindow && IsPredictionOnlyComposition()) {
+    _tsf->_AbortComposition();
+  }
   if (showCandidateWindow)
     _ui->Show();
   else
@@ -239,6 +244,20 @@ void CCandidateList::DestroyAll() {
 UIStyle& CCandidateList::style() {
   // return _ui->style();
   return _style;
+}
+
+bool CCandidateList::IsPredictionOnlyComposition() {
+  if (!_ui) {
+    return false;
+  }
+  const auto& ctx = _ui->ctx();
+  const auto& status = _ui->status();
+  const auto& preedit = ctx.preedit.str;
+  const bool preedit_blank =
+      std::all_of(preedit.begin(), preedit.end(), [](wchar_t ch) {
+        return iswspace(static_cast<wint_t>(ch));
+      });
+  return status.composing && preedit_blank && !ctx.cinfo.empty();
 }
 
 HWND CCandidateList::_GetActiveWnd() {
