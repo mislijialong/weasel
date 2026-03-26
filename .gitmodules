@@ -4,3 +4,6 @@
 [submodule "plum"]
 	path = plum
 	url = https://github.com/rime/plum.git
+[submodule "rime-ice"]
+	path = rime-ice
+	url = http://192.168.114.7/rime/rime-ice
