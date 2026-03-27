@@ -45,7 +45,9 @@
       "Read(//c/Program Files \\(x86\\)/Git/bin/**)",
       "Bash(where bash:*)",
       "Bash(taskkill:*)",
-      "Bash(codex --version)"
+      "Bash(codex --version)",
+      "Bash(ls -la \"D:/work_2026/weasel1/output/\"*.dll)",
+      "Bash(reg query:*)"
     ]
   }
 }

@@ -61,12 +61,8 @@ void WeaselServerApp::SetupMenuHandlers() {
   m_server.AddMenuHandler(
       ID_WEASELTRAY_SYNC,
       std::bind(execute, dir / L"WeaselDeployer.exe", std::wstring(L"/sync")));
-  m_server.AddMenuHandler(ID_WEASELTRAY_WIKI,
-                          std::bind(open, L"https://rime.im/docs/"));
   m_server.AddMenuHandler(ID_WEASELTRAY_HOMEPAGE,
                           std::bind(open, L"https://rime.im/"));
-  m_server.AddMenuHandler(ID_WEASELTRAY_FORUM,
-                          std::bind(open, L"https://rime.im/discuss/"));
   m_server.AddMenuHandler(ID_WEASELTRAY_CHECKUPDATE, check_update);
   m_server.AddMenuHandler(ID_WEASELTRAY_INSTALLDIR, std::bind(explore, dir));
   m_server.AddMenuHandler(ID_WEASELTRAY_USERCONFIG,

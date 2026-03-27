@@ -160,9 +160,6 @@ BEGIN
         MENUITEM "程序文件夹(&P)",                   ID_WEASELTRAY_INSTALLDIR
         MENUITEM "日志文件夹 (&L)",                  ID_WEASELTRAY_LOGDIR
         MENUITEM SEPARATOR
-        MENUITEM "帮助文档 (&H)",                   ID_WEASELTRAY_WIKI
-        MENUITEM "参加讨论 (&J)",                   ID_WEASELTRAY_FORUM
-        MENUITEM SEPARATOR
         MENUITEM "检查新版本 (&U)",                  ID_WEASELTRAY_CHECKUPDATE
         MENUITEM "重新部署 (&R)",                   ID_WEASELTRAY_DEPLOY
         MENUITEM "退出 (&Q)",                     ID_WEASELTRAY_QUIT
@@ -250,9 +247,6 @@ BEGIN
         MENUITEM "程序文件夾 (&P)",                  ID_WEASELTRAY_INSTALLDIR
         MENUITEM "日誌文件夾 (&L)",                  ID_WEASELTRAY_LOGDIR
         MENUITEM SEPARATOR
-        MENUITEM "幫助文檔 (&H)",                   ID_WEASELTRAY_WIKI
-        MENUITEM "參加討論 (&J)",                   ID_WEASELTRAY_FORUM
-        MENUITEM SEPARATOR
         MENUITEM "檢查新版本 (&U)",                  ID_WEASELTRAY_CHECKUPDATE
         MENUITEM "重新部署 (&R)",                   ID_WEASELTRAY_DEPLOY
         MENUITEM "退出 (&Q)",                     ID_WEASELTRAY_QUIT
@@ -339,9 +333,6 @@ BEGIN
         MENUITEM "User folder (&C)",            ID_WEASELTRAY_USERCONFIG
         MENUITEM "Program folder (&P)",         ID_WEASELTRAY_INSTALLDIR
         MENUITEM "Log folder (&L)",             ID_WEASELTRAY_LOGDIR
-        MENUITEM SEPARATOR
-        MENUITEM "Help (&H)",                   ID_WEASELTRAY_WIKI
-        MENUITEM "Forum (&J)",                  ID_WEASELTRAY_FORUM
         MENUITEM SEPARATOR
         MENUITEM "Check for updates (&U)",      ID_WEASELTRAY_CHECKUPDATE
         MENUITEM "Deploy (&R)",                 ID_WEASELTRAY_DEPLOY

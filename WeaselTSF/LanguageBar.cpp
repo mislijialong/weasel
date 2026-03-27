@@ -327,12 +327,6 @@ void WeaselTSF::_HandleLangBarMenuSelect(UINT wID) {
     case ID_WEASELTRAY_LOGDIR:
       open(WeaselLogPath().wstring());
       break;
-    case ID_WEASELTRAY_WIKI:
-      open(L"https://rime.im/docs/");
-      break;
-    case ID_WEASELTRAY_FORUM:
-      open(L"https://rime.im/discuss/");
-      break;
     default:
       m_client.TrayCommand(wID);
       break;
