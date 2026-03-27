@@ -47,7 +47,8 @@
       "Bash(taskkill:*)",
       "Bash(codex --version)",
       "Bash(ls -la \"D:/work_2026/weasel1/output/\"*.dll)",
-      "Bash(reg query:*)"
+      "Bash(reg query:*)",
+      "WebFetch(domain:minimax-algeng-chat-tts.oss-cn-wulanchabu.aliyuncs.com)"
     ]
   }
 }

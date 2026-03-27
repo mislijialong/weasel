@@ -49,6 +49,9 @@ struct AIAssistantConfig {
         stream(true),
         login_required(false),
         debug_dump_context(false),
+        trigger_hotkey("Control+3"),
+        trigger_keycode('3'),
+        trigger_modifiers(ibus::CONTROL_MASK),
         endpoint(),
         api_key(),
         model("gpt-5"),
@@ -72,6 +75,9 @@ struct AIAssistantConfig {
   bool stream;
   bool login_required;
   bool debug_dump_context;
+  std::string trigger_hotkey;
+  UINT trigger_keycode;
+  UINT trigger_modifiers;
   std::string endpoint;
   std::string api_key;
   std::string model;

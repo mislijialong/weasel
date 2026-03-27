@@ -107,7 +107,6 @@ using CreateCoreWebView2EnvironmentWithOptionsFunc = HRESULT(STDAPICALLTYPE*)(
     ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler*);
 #endif
 
-constexpr UINT kAIAssistantTriggerKey = '3';
 constexpr wchar_t kAIPanelWindowClass[] = L"WeaselAIAssistantPanelWindow";
 constexpr int kAIPanelWidth = 760;
 constexpr int kAIPanelHeight = 580;
@@ -1427,15 +1426,27 @@ bool IsAIAssistantTriggerKey(const AIAssistantConfig& config,
   if (!config.enabled) {
     return false;
   }
-  if (key_event.keycode != kAIAssistantTriggerKey) {
+  const auto normalize_keycode = [](UINT keycode) {
+    if (keycode >= 'A' && keycode <= 'Z') {
+      return keycode - 'A' + 'a';
+    }
+    if (keycode == ibus::grave) {
+      return static_cast<UINT>('`');
+    }
+    return keycode;
+  };
+  if (normalize_keycode(key_event.keycode) !=
+      normalize_keycode(config.trigger_keycode)) {
     return false;
   }
-  const auto modifiers = key_event.mask & ibus::MODIFIER_MASK;
-  const bool has_ctrl = (modifiers & ibus::CONTROL_MASK) != 0;
-  const bool has_other_modifiers =
-      (modifiers & (ibus::SHIFT_MASK | ibus::ALT_MASK | ibus::SUPER_MASK |
-                    ibus::HYPER_MASK | ibus::META_MASK)) != 0;
-  return has_ctrl && !has_other_modifiers;
+  constexpr UINT kHotkeyModifiers = ibus::CONTROL_MASK | ibus::SHIFT_MASK |
+                                    ibus::ALT_MASK | ibus::SUPER_MASK |
+                                    ibus::HYPER_MASK | ibus::META_MASK;
+  const UINT modifiers = key_event.mask & kHotkeyModifiers;
+  if ((modifiers & config.trigger_modifiers) != config.trigger_modifiers) {
+    return false;
+  }
+  return (modifiers & (~config.trigger_modifiers)) == 0;
 }
 
 bool IsCtrlSpaceToggleKey(const KeyEvent& key_event) {
@@ -1619,6 +1630,156 @@ std::string TrimAsciiWhitespace(const std::string& input) {
     --last;
   }
   return input.substr(first, last - first);
+}
+
+std::string ToLowerAscii(std::string input) {
+  std::transform(input.begin(), input.end(), input.begin(),
+                 [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+  return input;
+}
+
+bool ParseAIAssistantTriggerKeyToken(const std::string& key_token,
+                                     UINT* keycode) {
+  if (!keycode || key_token.empty()) {
+    return false;
+  }
+  if (key_token.size() == 1) {
+    const unsigned char ch = static_cast<unsigned char>(key_token[0]);
+    if (std::isalnum(ch) || ch == '/' || ch == '\\' || ch == ',' || ch == '.' ||
+        ch == ';' || ch == '\'' || ch == '-' || ch == '=' || ch == '`') {
+      *keycode = (ch == '`') ? static_cast<UINT>(ibus::grave)
+                             : static_cast<UINT>(ch);
+      return true;
+    }
+  }
+  if (key_token == "space" || key_token == "spacebar") {
+    *keycode = ibus::space;
+    return true;
+  }
+  if (key_token == "grave" || key_token == "backquote" ||
+      key_token == "backtick") {
+    *keycode = ibus::grave;
+    return true;
+  }
+  if (key_token == "slash") {
+    *keycode = '/';
+    return true;
+  }
+  if (key_token == "backslash") {
+    *keycode = '\\';
+    return true;
+  }
+  if (key_token == "comma") {
+    *keycode = ',';
+    return true;
+  }
+  if (key_token == "period" || key_token == "dot") {
+    *keycode = '.';
+    return true;
+  }
+  if (key_token == "semicolon") {
+    *keycode = ';';
+    return true;
+  }
+  if (key_token == "quote" || key_token == "apostrophe") {
+    *keycode = '\'';
+    return true;
+  }
+  if (key_token == "minus" || key_token == "hyphen") {
+    *keycode = '-';
+    return true;
+  }
+  if (key_token == "equal" || key_token == "equals") {
+    *keycode = '=';
+    return true;
+  }
+  if (key_token == "tab") {
+    *keycode = ibus::Tab;
+    return true;
+  }
+  if (key_token == "enter" || key_token == "return") {
+    *keycode = ibus::Return;
+    return true;
+  }
+  if (key_token == "esc" || key_token == "escape") {
+    *keycode = ibus::Escape;
+    return true;
+  }
+  if (key_token.size() > 1 && key_token[0] == 'f') {
+    bool all_digits = true;
+    for (size_t i = 1; i < key_token.size(); ++i) {
+      if (!std::isdigit(static_cast<unsigned char>(key_token[i]))) {
+        all_digits = false;
+        break;
+      }
+    }
+    if (all_digits) {
+      const int fn = std::stoi(key_token.substr(1));
+      if (fn >= 1 && fn <= 35) {
+        *keycode = static_cast<UINT>(ibus::F1 + fn - 1);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool TryParseAIAssistantTriggerHotkey(const std::string& raw_hotkey,
+                                      UINT* keycode,
+                                      UINT* modifiers) {
+  if (!keycode || !modifiers) {
+    return false;
+  }
+  const std::string hotkey = TrimAsciiWhitespace(raw_hotkey);
+  if (hotkey.empty()) {
+    return false;
+  }
+  bool has_key = false;
+  UINT parsed_keycode = 0;
+  UINT parsed_modifiers = 0;
+  size_t begin = 0;
+  while (begin <= hotkey.size()) {
+    const size_t end = hotkey.find('+', begin);
+    const std::string token_raw =
+        end == std::string::npos ? hotkey.substr(begin)
+                                 : hotkey.substr(begin, end - begin);
+    const std::string token = ToLowerAscii(TrimAsciiWhitespace(token_raw));
+    if (token.empty()) {
+      return false;
+    }
+    UINT modifier = 0;
+    if (token == "ctrl" || token == "control") {
+      modifier = ibus::CONTROL_MASK;
+    } else if (token == "shift") {
+      modifier = ibus::SHIFT_MASK;
+    } else if (token == "alt") {
+      modifier = ibus::ALT_MASK;
+    } else if (token == "super" || token == "win" || token == "windows") {
+      modifier = ibus::SUPER_MASK;
+    } else if (token == "meta") {
+      modifier = ibus::META_MASK;
+    } else if (token == "hyper") {
+      modifier = ibus::HYPER_MASK;
+    }
+    if (modifier != 0) {
+      parsed_modifiers |= modifier;
+    } else {
+      if (has_key || !ParseAIAssistantTriggerKeyToken(token, &parsed_keycode)) {
+        return false;
+      }
+      has_key = true;
+    }
+    if (end == std::string::npos) {
+      break;
+    }
+    begin = end + 1;
+  }
+  if (!has_key) {
+    return false;
+  }
+  *keycode = parsed_keycode;
+  *modifiers = parsed_modifiers;
+  return true;
 }
 
 std::string GenerateLoginClientId() {
@@ -3489,6 +3650,8 @@ void RimeWithWeaselHandler::_LoadAIAssistantConfig(RimeConfig* config) {
                                 &debug_dump_context)) {
     m_ai_config.debug_dump_context = !!debug_dump_context;
   }
+  ReadConfigString(config, "ai_assistant/trigger_hotkey",
+                   &m_ai_config.trigger_hotkey);
   ReadConfigString(config, "ai_assistant/endpoint", &m_ai_config.endpoint);
   ReadConfigString(config, "ai_assistant/api_key", &m_ai_config.api_key);
   ReadConfigString(config, "ai_assistant/model", &m_ai_config.model);
@@ -3526,6 +3689,19 @@ void RimeWithWeaselHandler::_LoadAIAssistantConfig(RimeConfig* config) {
   }
   if (m_ai_config.reasoning_effort.empty()) {
     m_ai_config.reasoning_effort = "low";
+  }
+  if (m_ai_config.trigger_hotkey.empty()) {
+    m_ai_config.trigger_hotkey = "Control+3";
+  }
+  if (!TryParseAIAssistantTriggerHotkey(m_ai_config.trigger_hotkey,
+                                        &m_ai_config.trigger_keycode,
+                                        &m_ai_config.trigger_modifiers)) {
+    LOG(WARNING) << "Invalid ai_assistant/trigger_hotkey: "
+                 << m_ai_config.trigger_hotkey
+                 << "; fallback to Control+3.";
+    m_ai_config.trigger_hotkey = "Control+3";
+    m_ai_config.trigger_keycode = '3';
+    m_ai_config.trigger_modifiers = ibus::CONTROL_MASK;
   }
   if (m_ai_config.max_history_chars <= 0) {
     m_ai_config.max_history_chars = 2048;
@@ -3895,7 +4071,7 @@ bool RimeWithWeaselHandler::_TryProcessAIAssistantTrigger(KeyEvent keyEvent,
     return false;
   }
   if (m_ai_config.panel_url.empty()) {
-    LOG(WARNING) << "AI panel url is empty; skip Ctrl+3 trigger.";
+    LOG(WARNING) << "AI panel url is empty; skip AI trigger.";
     return false;
   }
   if (keyEvent.mask & ibus::RELEASE_MASK) {

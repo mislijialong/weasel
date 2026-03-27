@@ -90,8 +90,10 @@ BEGIN
     LTEXT           "请勾选所需的输入方案：",IDC_STATIC1,7,7,89,8
     CONTROL         "",IDC_SCHEMA_LIST,"SysListView32",LVS_REPORT | LVS_ALIGNLEFT | WS_BORDER | WS_TABSTOP,7,21,126,103
     LTEXT           "选中列表中的输入方案以查看简介",IDC_SCHEMA_DESCRIPTION,144,21,165,103
-    LTEXT           " 在智能输入法里,以下快捷键可唤出方案菜单,以切换模式或选用其他输入方案。",IDC_STATIC1,7,132,273,8
+    LTEXT           "方案选单快捷键：",IDC_STATIC1,7,132,67,8
+    LTEXT           "AI 面板触发快捷键：",IDC_STATIC1,144,132,89,8
     EDITTEXT        IDC_HOTKEYS,7,147,126,14,ES_AUTOHSCROLL
+    EDITTEXT        IDC_AI_HOTKEY,144,147,165,14,ES_AUTOHSCROLL
     PUSHBUTTON      "获取更多输入方案...",IDC_GET_SCHEMATA,7,169,90,14
     DEFPUSHBUTTON   "中",IDOK,133,169,50,14
 END
@@ -244,8 +246,10 @@ BEGIN
     LTEXT           "請勾選所需的輸入方案：",IDC_STATIC1,7,7,89,8
     CONTROL         "",IDC_SCHEMA_LIST,"SysListView32",LVS_REPORT | LVS_ALIGNLEFT | WS_BORDER | WS_TABSTOP,7,21,126,103
     LTEXT           "選中列表中的輸入方案以查看簡介",IDC_SCHEMA_DESCRIPTION,144,21,165,103
-    LTEXT           "在智能输入法裏，以下快捷鍵可喚出方案選單，以切換模式或選用其他輸入方案。",IDC_STATIC1,7,132,273,8
+    LTEXT           "方案選單快捷鍵：",IDC_STATIC1,7,132,67,8
+    LTEXT           "AI 面板觸發快捷鍵：",IDC_STATIC1,144,132,89,8
     EDITTEXT        IDC_HOTKEYS,7,147,126,14,ES_AUTOHSCROLL
+    EDITTEXT        IDC_AI_HOTKEY,144,147,165,14,ES_AUTOHSCROLL
     PUSHBUTTON      "獲取更多輸入方案...",IDC_GET_SCHEMATA,7,169,90,14
     DEFPUSHBUTTON   "中",IDOK,133,169,50,14
 END

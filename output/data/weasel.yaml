@@ -689,6 +689,7 @@ preset_color_schemes:
 # [End of <preset_color_schemes>]
 ai_assistant:
   enabled: true
+  trigger_hotkey: "Control+3"
   stream: true
   endpoint: "http://192.168.111.90:8016/v1/responses"
   api_key: "sk-qfW6gDJejTMdd7dPppW9n6YsOCcGVMIVswKmfjadzIxJPnst"

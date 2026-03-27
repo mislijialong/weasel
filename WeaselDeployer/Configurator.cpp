@@ -60,7 +60,7 @@ static bool configure_switcher(RimeLeversApi* api,
     return false;
   SwitcherSettingsDialog dialog(switchcer_settings);
   if (dialog.DoModal() == IDOK) {
-    if (api->save_settings(settings))
+    if (api->save_settings(settings) || dialog.ai_hotkey_saved())
       *reconfigured = true;
     return true;
   }

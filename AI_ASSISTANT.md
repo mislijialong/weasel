@@ -4,7 +4,7 @@
 
 ### 行为
 
-- 按 `Ctrl + 3` 触发面板。
+- 按 `ai_assistant.trigger_hotkey` 触发面板（默认 `Ctrl + 3`）。
 - 若当前有未上屏 preedit，会先上屏，避免内容丢失。
 - Host 只负责：
   - 收集上下文（输入法历史 + 当前预编辑）
@@ -17,6 +17,7 @@
 ```yaml
 ai_assistant:
   enabled: true
+  trigger_hotkey: "Control+3"
   login_required: true
   debug_dump_context: false
   debug_dump_path: "ai_context_dump.txt"
@@ -40,7 +41,8 @@ ai_assistant:
 
 说明：
 
-- `panel_url` 必填，`Ctrl+3` 触发时会直接 `Navigate(panel_url)`。
+- `trigger_hotkey` 可配置触发快捷键，默认 `Control+3`。
+- `panel_url` 必填，触发快捷键命中时会直接 `Navigate(panel_url)`。
 - `panel_allowed_origin` 为空时，会从 `panel_url` 自动推导 origin。
 - Host 到 React 的 token/tenantId/上下文通过 `postMessage` 发送，不走 URL 参数。
 
