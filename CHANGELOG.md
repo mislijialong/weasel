@@ -1,4 +1,4 @@
-<a name="0.17.4"></a>
+﻿<a name="0.17.4"></a>
 ## [0.17.4](https://github.com/rime/weasel/compare/0.17.3...0.17.4)(2025-06-04)
 
 ### 主要更新
@@ -121,7 +121,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 #### 安裝須知
 
-**⚠️如您由0.16.0之前的版本升級，由於參數變化，安裝小狼毫前請保存好文件資料，於安裝後重啓或註銷 Windows，否則正在使用小狼毫的應用可能會崩潰。**
+**⚠️如您由0.16.0之前的版本升級，由於參數變化，安裝智能输入法前請保存好文件資料，於安裝後重啓或註銷 Windows，否則正在使用智能输入法的應用可能會崩潰。**
 
 **⚠如您由0.16.0之前的版本升級，請確認您的 `installation.yaml` 文件編碼爲 `UTF-8`, 否則如您在其中修改了非 ASCII 字符內容的路徑時，有可能會引起未明錯誤。**
 
@@ -159,7 +159,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 #### 安裝須知
 
-**⚠️如您由0.16.0之前的版本升級，由於參數變化，安裝小狼毫前請保存好文件資料，於安裝後重啓或註銷 Windows，否則正在使用小狼毫的應用可能會崩潰。**
+**⚠️如您由0.16.0之前的版本升級，由於參數變化，安裝智能输入法前請保存好文件資料，於安裝後重啓或註銷 Windows，否則正在使用智能输入法的應用可能會崩潰。**
 
 **⚠如您由0.16.0之前的版本升級，請確認您的 `installation.yaml` 文件編碼爲 `UTF-8`, 否則如您在其中修改了非 ASCII 字符內容的路徑時，有可能會引起未明錯誤。**
 
@@ -178,7 +178,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 * 修復自動折行未正確處理標點符號（標點在折行後最前）的問題
 * 修復`vim-mode`下的typo引起的`<C-C>`無法生效問題
 * 修復部署消息未更新問題
-* 修復卸載小狼毫時意外安裝語言包問題
+* 修復卸載智能输入法時意外安裝語言包問題
 * 修復`semi_hilite`下的UI未正確響應問題, `semi_hilite`顏色調整爲高亮色的半透明度狀態，改善體驗
 * 減少不必要的服務端UI更新，提高性能減少服務崩潰機率
 * 修復在非`DPI=96`的副屏上響應慢的問題
@@ -194,7 +194,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 #### 安裝須知
 
-**⚠️由於參數變化，安裝小狼毫前請保存好文件資料，於安裝後重啓或註銷 Windows，否則正在使用小狼毫的應用可能會崩潰。**
+**⚠️由於參數變化，安裝智能输入法前請保存好文件資料，於安裝後重啓或註銷 Windows，否則正在使用智能输入法的應用可能會崩潰。**
 
 **⚠請確認您的 `installation.yaml` 文件編碼爲 `UTF-8`, 否則如您在其中修改了非 ASCII 字符內容的路徑時，有可能會引起未明錯誤。**
 
@@ -208,7 +208,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 * 32 位算法服務增加 LARGE ADDRESS AWARE 支持
 * 升級 boost 算法庫至 1.84.0
 * IME改爲可選項，默認不安裝
-* 棄用 `weaselt*.dll`，增加註冊香港、澳門、新加坡區域語言配置（默認未啓用，需在控制面板/設置中手工添加）；支持簡繁體小狼毫同時使能
+* 棄用 `weaselt*.dll`，增加註冊香港、澳門、新加坡區域語言配置（默認未啓用，需在控制面板/設置中手工添加）；支持簡繁體智能输入法同時使能
 * 棄用 `weaselt*.ime`
 * 移除 `pyweasel`
 * 候選窗口 UI 內存優化
@@ -236,7 +236,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 * 新增參數 `global_ascii: bool`, 支持全局 ascii 模式
 * 新增 `app_options`，支持應用專用 `vim_mode: bool`，支持常見 vim 切換 normal 模式按鍵時，切換到 `ascii_mode`
 * 新增 `app_options`，支持應用專用 `inline_preedit: bool` 設定，優先級高於方案內設定，高於 `weasel.yaml` 中的設定
-* 支持命令行設置小狼毫 `ascii_mode` 狀態，`WeaselServer.exe /ascii`，`WeaselServer.exe /nascii`
+* 支持命令行設置智能输入法 `ascii_mode` 狀態，`WeaselServer.exe /ascii`，`WeaselServer.exe /nascii`
 * 支持設置 `comment_text_color`、`hilited_comment_text_color` 透明來隱藏對應文字顯示
 * `hilited_mark_color` 非透明，`mark_text` 爲空字符串時，類 windowns 11 的高亮標識
 * 切換方案後，提示方案圖標和方案名字
@@ -304,8 +304,8 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 #### 安裝須知
 
-**⚠️安裝小狼毫前請保存好文件資料，於安裝後重啓 Windows ，否則正在使用小狼毫的應用將會崩潰。**
-**⚠️此版本的小狼毫需要使用 Windows 8.1 或更高版本的操作系統。**
+**⚠️安裝智能输入法前請保存好文件資料，於安裝後重啓 Windows ，否則正在使用智能输入法的應用將會崩潰。**
+**⚠️此版本的智能输入法需要使用 Windows 8.1 或更高版本的操作系統。**
 
 #### 主要更新
 
@@ -385,9 +385,9 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 * 修復中文路徑相關問題
 * 修復右鍵菜單打開程序目錄/用戶目錄時，資源管理器無響應的問題
 * 修復部分內存訪問問題
-* 修復操作系統 / WinGet 無法識別小狼毫版本號的問題
+* 修復操作系統 / WinGet 無法識別智能输入法版本號的問題
 * 修復 composition 模式下光標位置不正常的問題
-* 修復 Word 中小狼毫工作不正常的問題
+* 修復 Word 中智能输入法工作不正常的問題
 * 若干開發環境配置問題修復
 
 #### 已知問題
@@ -486,7 +486,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 #### 主要更新
 
-* 合併小狼毫與小狼毫（TSF）兩種輸入法
+* 合併智能输入法與智能输入法（TSF）兩種輸入法
 * 合併32位與64位系統下的安裝程序
 * 使用系統的關閉輸入法功能（默認快捷鍵 Ctrl + Space）後，輸入法圖標將顯示禁用狀態
 * 修復一些情況下的崩潰問題
@@ -601,7 +601,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.10.0"></a>
-## 小狼毫 0.10.0 (2018-03-14)
+## 智能输入法 0.10.0 (2018-03-14)
 
 
 #### 主要更新
@@ -639,7 +639,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.30"></a>
-## 小狼毫 0.9.30 (2014-04-01)
+## 智能输入法 0.9.30 (2014-04-01)
 
 
 #### Rime 算法庫變更集
@@ -661,10 +661,10 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.29.1"></a>
-## 小狼毫 0.9.29.1 (2013-12-22)
+## 智能输入法 0.9.29.1 (2013-12-22)
 
 
-#### 【小狼毫】變更集
+#### 【智能输入法】變更集
 
 * 變更：不再支持 Windows XP SP2，因升級編譯器以支持 C++11
 * 修復：輸入語言選爲中文（臺灣）在 Windows 8 系統上出現多餘的輸入法選項
@@ -688,10 +688,10 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.28"></a>
-## 小狼毫 0.9.28 <2013-12-01>
+## 智能输入法 0.9.28 <2013-12-01>
 
 
-#### 【小狼毫】變更集
+#### 【智能输入法】變更集
 
 * 新增：一組配色方案，作者：P1461、Patricivs、skoj、五磅兔
 * 修復：[Issue 528](https://code.google.com/p/rimeime/issues/detail?id=528) Windows 7 IE11 文字無法上屏
@@ -714,10 +714,10 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.27"></a>
-## 小狼毫 0.9.27 (2013-11-06)
+## 智能输入法 0.9.27 (2013-11-06)
 
 
-#### 【小狼毫】變更集
+#### 【智能输入法】變更集
 
 * 變更：動態鏈接 `rime.dll`，減小程序文件的體積
 * 修復：嘗試解決 Issue 487 避免服務進程以 SYSTEM 帳號執行
@@ -751,14 +751,14 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.26.1"></a>
-## 小狼毫 0.9.26.1 (2013-10-09)
+## 智能输入法 0.9.26.1 (2013-10-09)
 
 * 修復：從上一個版本升級【倉頡】輸入方案不會自動更新的問題
 
 
 
 <a name="0.9.26"></a>
-## 小狼毫 0.9.26 (2013-10-08)
+## 智能输入法 0.9.26 (2013-10-08)
 
 * 新增：【倉頡】開啓自動造詞<br/>
   連續上屏的5字（依設定）以內的組合，或以連打方式上屏的短語，
@@ -778,7 +778,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.25.2"></a>
-## 小狼毫 0.9.25.2 (2013-07-26)
+## 智能输入法 0.9.25.2 (2013-07-26)
 
 * 改進：碼表輸入法連打，Shift+BackSpace 以字、詞爲單位回退
 * 修復：演示模式下開啓內嵌編碼行、查無候選字時程序卡死
@@ -786,7 +786,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.25.1"></a>
-## 小狼毫 0.9.25.1 (2013-07-25)
+## 智能输入法 0.9.25.1 (2013-07-25)
 
 * 新增：開始菜單項「檢查新版本」，手動升級到最新測試版
 * 新增：【地球拼音】5 字內候選標註完整帶調拼音
@@ -794,7 +794,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.25"></a>
-## 小狼毫 0.9.25 (2013-07-24)
+## 智能输入法 0.9.25 (2013-07-24)
 
 * 新增：演示模式（全屏的輸入窗口）`style/fullscreen: true`
 * 新增：【倉頡】按快趣取碼規則生成常用詞組
@@ -805,7 +805,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.24"></a>
-## 小狼毫 0.9.24 (2013-07-04)
+## 智能输入法 0.9.24 (2013-07-04)
 
 * 新增：支持全角模式
 * 更新：中古漢語【全拼】【三拼】輸入方案；三拼亦採用全拼詞典
@@ -820,7 +820,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.23"></a>
-## 小狼毫 0.9.23 (2013-06-09)
+## 智能输入法 0.9.23 (2013-06-09)
 
 * 改進：方案選單按選用輸入方案的時間排列
 * 新增：快捷鍵 Control+Shift+1 切換至下一個輸入方案
@@ -835,7 +835,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.22.1"></a>
-## 小狼毫 0.9.22.1 (2013-04-24)
+## 智能输入法 0.9.22.1 (2013-04-24)
 
 * 修復：禁止自定義短語參與造句
 * 修復：GVim 裏進入命令模式或在插入模式換行錯使輸入法重置爲初始狀態
@@ -843,7 +843,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.22"></a>
-## 小狼毫 0.9.22 (2013-04-23)
+## 智能输入法 0.9.22 (2013-04-23)
 
 * 新增：配色方案【曬經石】／Solarized Rock
 * 新增：Control+BackSpace 或 Shift+BackSpace 回退一個音節
@@ -866,7 +866,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.20"></a>
-## 小狼毫 0.9.20 (2013-02-01)
+## 智能输入法 0.9.20 (2013-02-01)
 
 * 變更：Caps Lock 燈亮時默認輸出大寫字母 [Gist](https://gist.github.com/2981316)
   升級安裝後若 Caps Lock 的表現不正確，請註銷並重新登錄
@@ -887,7 +887,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.19.1"></a>
-## 小狼毫 0.9.19.1 (2013-01-16)
+## 智能输入法 0.9.19.1 (2013-01-16)
 
 * 新增：Caps Lock 點亮時，切換到西文模式，輸出小寫字母<br/>
   選項 `ascii_composer/switch_key/Caps_Lock:`
@@ -898,14 +898,14 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.18.6"></a>
-## 小狼毫 0.9.18.6 (2013-01-09)
+## 智能输入法 0.9.18.6 (2013-01-09)
 
 * 修復：從 0.9.16 及以下版本升級用戶詞典出錯
 
 
 
 <a name="0.9.18.5"></a>
-## 小狼毫 0.9.18.5 (2013-01-07)
+## 智能输入法 0.9.18.5 (2013-01-07)
 
 * 修復：含簡化字的候選詞不能以音節爲單位移動光標
 * 改進：同步用戶資料時也備份用戶修改的YAML文件
@@ -913,7 +913,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.18"></a>
-## 小狼毫 0.9.18 (2013-01-05)
+## 智能输入法 0.9.18 (2013-01-05)
 
 * 新增：同步用戶詞典，詳見 [Wiki » UserGuide](https://code.google.com/p/rimeime/wiki/UserGuide)
 * 新增：上屏錯誤的詞組後立即按回退鍵（BackSpace）撤銷組詞
@@ -923,7 +923,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.17.1"></a>
-## 小狼毫 0.9.17.1 (2012-12-25)
+## 智能输入法 0.9.17.1 (2012-12-25)
 
 * 修復：設置爲默認輸入語言後再安裝，IME 註冊失敗
 * 修復：啓用托盤圖標的選項無效
@@ -933,7 +933,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.17"></a>
-## 小狼毫 0.9.17 (2012-12-23)
+## 智能输入法 0.9.17 (2012-12-23)
 
 * 新增：切換模式、輸入方案時，短暫顯示狀態圖標
 * 新增：隱藏托盤圖標，設定、部署、詞典管理請用開始菜單。<br/>
@@ -950,7 +950,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.16"></a>
-## 小狼毫 0.9.16 (2012-10-20)
+## 智能输入法 0.9.16 (2012-10-20)
 
 * 新增：TSF 輸入法框架（測試階段）及嵌入式編碼行
 * 新增：支持 IE 8 ~ 10 的「保護模式」
@@ -969,7 +969,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.15"></a>
-## 小狼毫 0.9.15 (2012-09-12)
+## 智能输入法 0.9.15 (2012-09-12)
 
 * 新增：橫排候選欄——歡迎 wishstudio 同學加入開發！
 * 新增：綠色安裝工具 WeaselSetup，註冊輸入語言、自訂用戶目錄
@@ -982,21 +982,21 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.14.2"></a>
-## 小狼毫 0.9.14.2 (2012-07-13)
+## 智能输入法 0.9.14.2 (2012-07-13)
 
 * 重新編譯了 `opencc.dll` 安全軟件不吭氣了
 
 
 
 <a name="0.9.14.1"></a>
-## 小狼毫 0.9.14.1 (2012-07-07)
+## 智能输入法 0.9.14.1 (2012-07-07)
 
 * 解決【中古全拼】不可用的問題
 
 
 
 <a name="0.9.14"></a>
-## 小狼毫 0.9.14 (2012-07-05)
+## 智能输入法 0.9.14 (2012-07-05)
 
 * 介面採用新的 Rime logo，狀態圖示用較柔和的顏色
 * 新特性：碼表方案支持與反查碼混合輸入，無需切換或引導鍵
@@ -1012,7 +1012,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.13"></a>
-## 小狼毫 0.9.13 (2012-06-10)
+## 智能输入法 0.9.13 (2012-06-10)
 
 * 編碼提示用淡墨來寫，亦可在配色方案中設定顏色
 * 新增多鍵並擊組件及輸入方案【宮保拼音】
@@ -1030,7 +1030,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.12"></a>
-## 小狼毫 0.9.12 (2012-05-05)
+## 智能输入法 0.9.12 (2012-05-05)
 
 * 用 Shift+Del 刪除已記入用戶詞典的詞條，詳見 Issue 117
 * 可選用Shift或Control爲中西文切換鍵，詳見 Issue 133
@@ -1042,7 +1042,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.11"></a>
-## 小狼毫 0.9.11 (2012-04-14)
+## 智能输入法 0.9.11 (2012-04-14)
 
 * 使用 `express_editor` 的輸入方案中，數字、符號鍵直接上屏
 * 優化「方案選單」快捷鍵操作，連續按鍵選中下一個輸入方案
@@ -1059,7 +1059,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.10"></a>
-## 小狼毫 0.9.10 (2012-03-26)
+## 智能输入法 0.9.10 (2012-03-26)
 
 * 記憶繁簡轉換、全／半角符號開關狀態
 * 支持定長編碼頂字上屏
@@ -1072,7 +1072,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.9"></a>
-## 小狼毫 0.9.9
+## 智能输入法 0.9.9
 
 * 新增「介面風格設定」，快速選擇預設的六款配色方案
 * 優化長句中字詞的動態調頻
@@ -1084,7 +1084,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.8"></a>
-## 小狼毫 0.9.8
+## 智能输入法 0.9.8
 
 * 新增「輸入方案選單」設定介面
 * 優化包含簡拼的音節切分
@@ -1094,7 +1094,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.7"></a>
-## 小狼毫 0.9.7
+## 智能输入法 0.9.7
 
 * 逐鍵提示、反查提示碼支持拼寫運算（如顯示倉頡字母等）
 * 重構部署工具；以 `*.custom.yaml` 文件持久保存自定義設置
@@ -1103,7 +1103,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.6"></a>
-## 小狼毫 0.9.6
+## 智能输入法 0.9.6
 
 * 關機時妥善保存數據，降低用戶詞庫損壞機率；執行定期備份
 * 新增基於【朙月拼音】的衍生方案：
@@ -1116,7 +1116,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.5"></a>
-## 小狼毫 0.9.5
+## 智能输入法 0.9.5
 
 * Rime 獨門絕活之「拼寫運算」
 * 升級【朙月拼音】，支持簡拼、糾錯；增設【簡化字】方案
@@ -1126,7 +1126,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.4"></a>
-## 小狼毫 0.9.4
+## 智能输入法 0.9.4
 
 * 增設編碼反查功能，預設方案以「`」爲反查的引導鍵
 * 修復Windows XP中西文狀態變更時的通知氣球
@@ -1134,7 +1134,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.3"></a>
-## 小狼毫 0.9.3
+## 智能输入法 0.9.3
 
 * 新增預設輸入方案【五笔86】、【臺灣正體】拼音
 * 以托盤圖標表現輸入法狀態變更
@@ -1144,7 +1144,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9.2"></a>
-## 小狼毫 0.9.2
+## 智能输入法 0.9.2
 
 * 增設半角標點符號
 * 增設Shift鍵切換中／西文模式
@@ -1157,7 +1157,7 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 <a name="0.9"></a>
-## 小狼毫 0.9
+## 智能输入法 0.9
 
 * 用C++重寫核心算法（階段成果）
 * 將輸入法介面從前端遷移到後臺服務進程
@@ -1165,9 +1165,10 @@ refactorï(RimeWithWeasel) simplify color parsing function ([fxliang](https://gi
 
 
 
-## 小狼毫 0.1 ~ 0.3
+## 智能输入法 0.1 ~ 0.3
 
 * 以Python開發的實驗版本
 * 獨創「拼寫運算」技術
 * 預裝標調拼音、註音、粵拼、吳語等多種輸入方案
+
 

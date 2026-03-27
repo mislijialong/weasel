@@ -194,7 +194,7 @@ inline std::wstring get_weasel_ime_name() {
       langId == MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_HONGKONG) ||
       langId == MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SINGAPORE) ||
       langId == MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_MACAU)) {
-    return L"小狼毫";
+    return L"智能输入法";
   } else {
     return L"Weasel";
   }
@@ -319,3 +319,4 @@ inline void HR_Impl(HRESULT const result, const char* file, int line) {
     throw ComException(result);
   }
 }
+

@@ -1,7 +1,7 @@
 ﻿/******************************************************************************
- * RimeWithWeasel.cpp - 小狼毫输入法核心处理器实现
+ * RimeWithWeasel.cpp - 智能输入法核心处理器实现
  *
- * 本文件实现了RimeWithWeaselHandler类，是小狼毫(Weasel)输入法的核心组件。
+ * 本文件实现了RimeWithWeaselHandler类，是智能输入法(Weasel)的核心组件。
  * 负责处理与Rime引擎的交互、UI更新、候选词管理、AI助手功能等。
  *
  * 主要功能模块：

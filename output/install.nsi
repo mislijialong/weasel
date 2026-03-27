@@ -22,17 +22,17 @@ Unicode true
 !define REG_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Weasel"
 
 ; The name of the installer
-Name "小狼毫 ${WEASEL_VERSION}"
+Name "智能输入法 ${WEASEL_VERSION}"
 
 ; The file to write
 OutFile "archives\weasel-${PRODUCT_VERSION}-installer.exe"
 
 VIProductVersion "${WEASEL_VERSION}.${WEASEL_BUILD}"
-VIAddVersionKey /LANG=2052 "ProductName" "小狼毫"
+VIAddVersionKey /LANG=2052 "ProductName" "智能输入法"
 VIAddVersionKey /LANG=2052 "Comments" "Powered by RIME | 中州韻輸入法引擎"
-VIAddVersionKey /LANG=2052 "CompanyName" "式恕堂"
+VIAddVersionKey /LANG=2052 "CompanyName" "神州新桥"
 VIAddVersionKey /LANG=2052 "LegalCopyright" "Copyleft RIME Developers"
-VIAddVersionKey /LANG=2052 "FileDescription" "小狼毫輸入法"
+VIAddVersionKey /LANG=2052 "FileDescription" "智能输入法"
 VIAddVersionKey /LANG=2052 "FileVersion" "${WEASEL_VERSION}"
 
 !define MUI_ICON ..\resource\weasel.ico
@@ -60,36 +60,36 @@ RequestExecutionLevel admin
 ; Languages
 
 !insertmacro MUI_LANGUAGE "TradChinese"
-LangString DISPLAYNAME ${LANG_TRADCHINESE} "小狼毫輸入法"
-LangString LNKFORMANUAL ${LANG_TRADCHINESE} "【小狼毫】說明書"
-LangString LNKFORSETTING ${LANG_TRADCHINESE} "【小狼毫】輸入法設定"
-LangString LNKFORDICT ${LANG_TRADCHINESE} "【小狼毫】用戶詞典管理"
-LangString LNKFORSYNC ${LANG_TRADCHINESE} "【小狼毫】用戶資料同步"
-LangString LNKFORDEPLOY ${LANG_TRADCHINESE} "【小狼毫】重新部署"
-LangString LNKFORSERVER ${LANG_TRADCHINESE} "小狼毫算法服務"
-LangString LNKFORUSERFOLDER ${LANG_TRADCHINESE} "【小狼毫】用戶文件夾"
-LangString LNKFORAPPFOLDER ${LANG_TRADCHINESE} "【小狼毫】程序文件夾"
-LangString LNKFORUPDATER ${LANG_TRADCHINESE} "【小狼毫】檢查新版本"
-LangString LNKFORSETUP ${LANG_TRADCHINESE} "【小狼毫】安裝選項"
-LangString LNKFORUNINSTALL ${LANG_TRADCHINESE} "卸載小狼毫"
-LangString CONFIRMATION ${LANG_TRADCHINESE} "安裝前，請先卸載舊版本的小狼毫。$\n$\n按下「確定」移除舊版本，按下「取消」放棄本次安裝。"
+LangString DISPLAYNAME ${LANG_TRADCHINESE} "智能输入法"
+LangString LNKFORMANUAL ${LANG_TRADCHINESE} "【智能输入法】說明書"
+LangString LNKFORSETTING ${LANG_TRADCHINESE} "【智能输入法】輸入法設定"
+LangString LNKFORDICT ${LANG_TRADCHINESE} "【智能输入法】用戶詞典管理"
+LangString LNKFORSYNC ${LANG_TRADCHINESE} "【智能输入法】用戶資料同步"
+LangString LNKFORDEPLOY ${LANG_TRADCHINESE} "【智能输入法】重新部署"
+LangString LNKFORSERVER ${LANG_TRADCHINESE} "智能输入法算法服務"
+LangString LNKFORUSERFOLDER ${LANG_TRADCHINESE} "【智能输入法】用戶文件夾"
+LangString LNKFORAPPFOLDER ${LANG_TRADCHINESE} "【智能输入法】程序文件夾"
+LangString LNKFORUPDATER ${LANG_TRADCHINESE} "【智能输入法】檢查新版本"
+LangString LNKFORSETUP ${LANG_TRADCHINESE} "【智能输入法】安裝選項"
+LangString LNKFORUNINSTALL ${LANG_TRADCHINESE} "卸載智能输入法"
+LangString CONFIRMATION ${LANG_TRADCHINESE} "安裝前，請先卸載舊版本的智能输入法。$\n$\n按下「確定」移除舊版本，按下「取消」放棄本次安裝。"
 LangString SYSTEMVERSIONNOTOK ${LANG_TRADCHINESE} "您的系统不被支持，最低系統要求:Windows 8.1!"
 LangString AUTOCHKUPDATE ${LANG_TRADCHINESE} "自動檢查版本更新？"
 
 !insertmacro MUI_LANGUAGE "SimpChinese"
-LangString DISPLAYNAME ${LANG_SIMPCHINESE} "小狼毫输入法"
-LangString LNKFORMANUAL ${LANG_SIMPCHINESE} "【小狼毫】说明书"
-LangString LNKFORSETTING ${LANG_SIMPCHINESE} "【小狼毫】输入法设定"
-LangString LNKFORDICT ${LANG_SIMPCHINESE} "【小狼毫】用户词典管理"
-LangString LNKFORSYNC ${LANG_SIMPCHINESE} "【小狼毫】用户资料同步"
-LangString LNKFORDEPLOY ${LANG_SIMPCHINESE} "【小狼毫】重新部署"
-LangString LNKFORSERVER ${LANG_SIMPCHINESE} "小狼毫算法服务"
-LangString LNKFORUSERFOLDER ${LANG_SIMPCHINESE} "【小狼毫】用户文件夹"
-LangString LNKFORAPPFOLDER ${LANG_SIMPCHINESE} "【小狼毫】程序文件夹"
-LangString LNKFORUPDATER ${LANG_SIMPCHINESE} "【小狼毫】检查新版本"
-LangString LNKFORSETUP ${LANG_SIMPCHINESE} "【小狼毫】安装选项"
-LangString LNKFORUNINSTALL ${LANG_SIMPCHINESE} "卸载小狼毫"
-LangString CONFIRMATION ${LANG_SIMPCHINESE} '安装前，请先卸载旧版本的小狼毫。$\n$\n点击 "确定" 移除旧版本，或点击 "取消" 放弃本次安装。'
+LangString DISPLAYNAME ${LANG_SIMPCHINESE} "智能输入法"
+LangString LNKFORMANUAL ${LANG_SIMPCHINESE} "【智能输入法】说明书"
+LangString LNKFORSETTING ${LANG_SIMPCHINESE} "【智能输入法】输入法设定"
+LangString LNKFORDICT ${LANG_SIMPCHINESE} "【智能输入法】用户词典管理"
+LangString LNKFORSYNC ${LANG_SIMPCHINESE} "【智能输入法】用户资料同步"
+LangString LNKFORDEPLOY ${LANG_SIMPCHINESE} "【智能输入法】重新部署"
+LangString LNKFORSERVER ${LANG_SIMPCHINESE} "智能输入法算法服务"
+LangString LNKFORUSERFOLDER ${LANG_SIMPCHINESE} "【智能输入法】用户文件夹"
+LangString LNKFORAPPFOLDER ${LANG_SIMPCHINESE} "【智能输入法】程序文件夹"
+LangString LNKFORUPDATER ${LANG_SIMPCHINESE} "【智能输入法】检查新版本"
+LangString LNKFORSETUP ${LANG_SIMPCHINESE} "【智能输入法】安装选项"
+LangString LNKFORUNINSTALL ${LANG_SIMPCHINESE} "卸载智能输入法"
+LangString CONFIRMATION ${LANG_SIMPCHINESE} '安装前，请先卸载旧版本的智能输入法。$\n$\n点击 "确定" 移除旧版本，或点击 "取消" 放弃本次安装。'
 LangString SYSTEMVERSIONNOTOK ${LANG_SIMPCHINESE} "您的系統不被支持，最低系统要求:Windows 8.1!"
 LangString AUTOCHKUPDATE ${LANG_SIMPCHINESE} "自动检查版本更新？"
 
@@ -316,7 +316,7 @@ program_files:
   WriteRegStr HKLM "${REG_UNINST_KEY}" "DisplayIcon" '"$INSTDIR\WeaselServer.exe"'
   WriteRegStr HKLM "${REG_UNINST_KEY}" "DisplayVersion" "${WEASEL_VERSION}.${WEASEL_BUILD}"
   WriteRegStr HKLM "${REG_UNINST_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
-  WriteRegStr HKLM "${REG_UNINST_KEY}" "Publisher" "式恕堂"
+  WriteRegStr HKLM "${REG_UNINST_KEY}" "Publisher" "神州新桥"
   WriteRegStr HKLM "${REG_UNINST_KEY}" "URLInfoAbout" "https://rime.im/"
   WriteRegStr HKLM "${REG_UNINST_KEY}" "HelpLink" "https://rime.im/docs/"
   WriteRegDWORD HKLM "${REG_UNINST_KEY}" "NoModify" 1
@@ -416,3 +416,4 @@ Section "Uninstall"
   SetRebootFlag true
 
 SectionEnd
+
