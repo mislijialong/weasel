@@ -181,6 +181,13 @@ LRESULT SwitcherSettingsDialog::OnInitDialog(UINT, WPARAM, LPARAM, BOOL&) {
   ai_hotkey_.Attach(GetDlgItem(IDC_AI_HOTKEY));
   ai_hotkey_.EnableWindow(TRUE);
 
+  // Compatibility fallback: force-hide legacy "Get Schemata" button if any
+  // resource variant still contains IDC_GET_SCHEMATA.
+  if (HWND legacy_button = GetDlgItem(IDC_GET_SCHEMATA)) {
+    ::EnableWindow(legacy_button, FALSE);
+    ::ShowWindow(legacy_button, SW_HIDE);
+  }
+
   Populate();
 
   CenterWindow();
