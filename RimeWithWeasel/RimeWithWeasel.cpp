@@ -30,6 +30,7 @@
 #include <shellapi.h>
 
 #include <cctype>
+#include <cstdlib>
 #include <cwctype>
 #include <array>
 #include <chrono>
@@ -108,8 +109,13 @@ using CreateCoreWebView2EnvironmentWithOptionsFunc = HRESULT(STDAPICALLTYPE*)(
 #endif
 
 constexpr wchar_t kAIPanelWindowClass[] = L"WeaselAIAssistantPanelWindow";
-constexpr int kAIPanelWidth = 760;
-constexpr int kAIPanelHeight = 580;
+constexpr int kAIPanelWidth = 180;
+constexpr int kAIPanelHeight = 220;
+constexpr int kAIPanelMinWidth = 500;
+constexpr int kAIPanelMaxWidth = 860;
+constexpr int kAIPanelMinHeight = 320;
+constexpr int kAIPanelMaxHeight = 560;
+constexpr int kAIPanelScreenMargin = 8;
 constexpr int kAIPanelPadding = 0;
 constexpr int kAIPanelCornerRadius = 12;
 constexpr int kAIPanelButtonWidth = 96;
@@ -146,6 +152,9 @@ struct AIPanelUiCommand {
   std::string type;
   std::wstring text;
   std::wstring institution_id;
+  int panel_width = 0;
+  int panel_height = 0;
+  std::string resize_reason;
 };
 
 void TryDisableAIPanelWindowBorder(HWND hwnd) {
@@ -2363,6 +2372,9 @@ bool ParseAIPanelUiCommand(const std::wstring& message,
   command->type.clear();
   command->text.clear();
   command->institution_id.clear();
+  command->panel_width = 0;
+  command->panel_height = 0;
+  command->resize_reason.clear();
   if (message.empty()) {
     return false;
   }
@@ -2383,6 +2395,48 @@ bool ParseAIPanelUiCommand(const std::wstring& message,
       payload = &payload_it->value;
     }
     const rapidjson::Value& payload_ref = payload ? *payload : document;
+    const auto read_int_like_member = [](const rapidjson::Value& object,
+                                         const char* key,
+                                         int* out) -> bool {
+      if (!out || !object.IsObject()) {
+        return false;
+      }
+      const auto it = object.FindMember(key);
+      if (it == object.MemberEnd()) {
+        return false;
+      }
+      const rapidjson::Value& value = it->value;
+      if (value.IsInt()) {
+        *out = value.GetInt();
+        return true;
+      }
+      if (value.IsUint()) {
+        *out = static_cast<int>(value.GetUint());
+        return true;
+      }
+      if (value.IsInt64()) {
+        *out = static_cast<int>(value.GetInt64());
+        return true;
+      }
+      if (value.IsUint64()) {
+        *out = static_cast<int>(value.GetUint64());
+        return true;
+      }
+      if (value.IsDouble()) {
+        *out = static_cast<int>(value.GetDouble());
+        return true;
+      }
+      if (value.IsString()) {
+        const char* text = value.GetString();
+        if (!text || !*text) {
+          return false;
+        }
+        *out = std::atoi(text);
+        return true;
+      }
+      return false;
+    };
+
     if (type == "ui.context.changed") {
       std::string text;
       if (ReadStringLikeJsonMember(payload_ref, "text", &text)) {
@@ -2399,6 +2453,14 @@ bool ParseAIPanelUiCommand(const std::wstring& message,
       if (ReadStringLikeJsonMember(payload_ref, "text", &text)) {
         command->text = u8tow(text);
       }
+    } else if (type == "ui.panel.resize") {
+      int width = 0;
+      int height = 0;
+      read_int_like_member(payload_ref, "width", &width);
+      read_int_like_member(payload_ref, "height", &height);
+      command->panel_width = width;
+      command->panel_height = height;
+      ReadStringLikeJsonMember(payload_ref, "reason", &command->resize_reason);
     }
     return true;
   }
@@ -2462,6 +2524,18 @@ std::string BuildAIPanelHostSyncMessage(
   json += requesting ? "true" : "false";
   json += ",\"institutionsLoading\":";
   json += institutions_loading ? "true" : "false";
+  json += ",\"panelLimits\":{";
+  json += "\"minWidth\":";
+  json += std::to_string(kAIPanelMinWidth);
+  json += ",\"maxWidth\":";
+  json += std::to_string(kAIPanelMaxWidth);
+  json += ",\"minHeight\":";
+  json += std::to_string(kAIPanelMinHeight);
+  json += ",\"maxHeight\":";
+  json += std::to_string(kAIPanelMaxHeight);
+  json += ",\"margin\":";
+  json += std::to_string(kAIPanelScreenMargin);
+  json += "}";
   json += ",\"selectedInstitutionId\":\"";
   json += EscapeJsonString(wtou8(selected_institution_id));
   json += "\",\"auth\":{\"token\":\"";
@@ -3114,6 +3188,8 @@ RimeWithWeaselHandler::RimeWithWeaselHandler(UI* ui)
       _UpdateUICallback(NULL),
       m_ai_login_pending(false),
       m_ai_login_stop(false),
+      m_last_input_rect{0, 0, 0, 0},
+      m_has_last_input_rect(false),
       m_ai_request_seq(0) {
   m_ui->InServer() = true;
   rime_api = rime_get_api();
@@ -3486,6 +3562,11 @@ void RimeWithWeaselHandler::UpdateInputPosition(RECT const& rc,
   DLOG(INFO) << "Update input position: (" << rc.left << ", " << rc.top
              << "), ipc_id = " << ipc_id
              << ", m_active_session = " << m_active_session;
+  {
+    std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
+    m_last_input_rect = rc;
+    m_has_last_input_rect = true;
+  }
   if (m_ui)
     m_ui->UpdateInputPosition(rc);
   if (m_disabled)
@@ -4266,6 +4347,11 @@ bool RimeWithWeaselHandler::_EnsureAIPanelWindow() {
       m_ai_panel.output_text.clear();
       m_ai_panel.institution_options.clear();
       m_ai_panel.selected_institution_id.clear();
+      m_ai_panel.panel_width = kAIPanelWidth;
+      m_ai_panel.panel_height = kAIPanelHeight;
+      m_ai_panel.last_panel_x = 0;
+      m_ai_panel.last_panel_y = 0;
+      m_ai_panel.has_last_panel_position = false;
       m_ai_panel.webview_ready = false;
       m_ai_panel.requesting = false;
       m_ai_panel.institutions_loading = false;
@@ -4302,6 +4388,11 @@ bool RimeWithWeaselHandler::_EnsureAIPanelWindow() {
         m_ai_panel.output_text.clear();
         m_ai_panel.institution_options.clear();
         m_ai_panel.selected_institution_id.clear();
+        m_ai_panel.panel_width = kAIPanelWidth;
+        m_ai_panel.panel_height = kAIPanelHeight;
+        m_ai_panel.last_panel_x = 0;
+        m_ai_panel.last_panel_y = 0;
+        m_ai_panel.has_last_panel_position = false;
         m_ai_panel.webview_ready = false;
         m_ai_panel.requesting = false;
         m_ai_panel.institutions_loading = false;
@@ -4333,6 +4424,125 @@ bool RimeWithWeaselHandler::_EnsureAIPanelWindow() {
     return true;
   }
   return false;
+}
+
+void RimeWithWeaselHandler::_ApplyAIPanelSizeAndReposition(
+    int requested_width,
+    int requested_height,
+    bool prefer_anchor_position) {
+  HWND panel_hwnd = nullptr;
+  HWND target_hwnd = nullptr;
+  RECT anchor_rect = {0, 0, 0, 0};
+  bool has_anchor = false;
+  bool has_last_position = false;
+  int last_panel_x = 0;
+  int last_panel_y = 0;
+  int width = kAIPanelWidth;
+  int height = kAIPanelHeight;
+  {
+    std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
+    panel_hwnd = m_ai_panel.panel_hwnd;
+    if (!panel_hwnd || !IsWindow(panel_hwnd)) {
+      return;
+    }
+    target_hwnd = m_ai_panel.target_hwnd;
+    width = m_ai_panel.panel_width > 0 ? m_ai_panel.panel_width : kAIPanelWidth;
+    height =
+        m_ai_panel.panel_height > 0 ? m_ai_panel.panel_height : kAIPanelHeight;
+    if (requested_width > 0) {
+      width = requested_width;
+    }
+    if (requested_height > 0) {
+      height = requested_height;
+    }
+    width = max(kAIPanelMinWidth, min(kAIPanelMaxWidth, width));
+    height = max(kAIPanelMinHeight, min(kAIPanelMaxHeight, height));
+    m_ai_panel.panel_width = width;
+    m_ai_panel.panel_height = height;
+    if (m_has_last_input_rect) {
+      anchor_rect = m_last_input_rect;
+      has_anchor = true;
+    }
+    has_last_position = m_ai_panel.has_last_panel_position;
+    last_panel_x = m_ai_panel.last_panel_x;
+    last_panel_y = m_ai_panel.last_panel_y;
+  }
+
+  RECT panel_rect = {0, 0, 0, 0};
+  if (panel_hwnd && IsWindow(panel_hwnd) && GetWindowRect(panel_hwnd, &panel_rect)) {
+    has_last_position = true;
+    last_panel_x = panel_rect.left;
+    last_panel_y = panel_rect.top;
+  }
+
+  RECT work_rect = {0, 0, 0, 0};
+  HMONITOR monitor = nullptr;
+  if (has_anchor) {
+    monitor = MonitorFromRect(&anchor_rect, MONITOR_DEFAULTTONEAREST);
+  }
+  if (!monitor && target_hwnd && IsWindow(target_hwnd)) {
+    monitor = MonitorFromWindow(target_hwnd, MONITOR_DEFAULTTONEAREST);
+  }
+  if (!monitor) {
+    monitor = MonitorFromWindow(panel_hwnd, MONITOR_DEFAULTTONEAREST);
+  }
+  MONITORINFO monitor_info = {0};
+  monitor_info.cbSize = sizeof(monitor_info);
+  if (monitor && GetMonitorInfoW(monitor, &monitor_info)) {
+    work_rect = monitor_info.rcWork;
+  } else {
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work_rect, 0);
+  }
+
+  const int min_x = work_rect.left + kAIPanelScreenMargin;
+  const int max_x = max(min_x, work_rect.right - kAIPanelScreenMargin - width);
+  const int min_y = work_rect.top + kAIPanelScreenMargin;
+  const int max_y =
+      max(min_y, work_rect.bottom - kAIPanelScreenMargin - height);
+  int x = min_x;
+  int y = min_y;
+  if (prefer_anchor_position && has_anchor) {
+    x = anchor_rect.left;
+    y = anchor_rect.bottom + 6;
+    if (y + height > work_rect.bottom - kAIPanelScreenMargin) {
+      const int above = anchor_rect.top - height - 6;
+      if (above >= min_y) {
+        y = above;
+      }
+    }
+  } else if (has_last_position) {
+    x = last_panel_x;
+    y = last_panel_y;
+  } else if (has_anchor) {
+    x = anchor_rect.left;
+    y = anchor_rect.bottom + 6;
+    if (y + height > work_rect.bottom - kAIPanelScreenMargin) {
+      const int above = anchor_rect.top - height - 6;
+      if (above >= min_y) {
+        y = above;
+      }
+    }
+  } else {
+    x = work_rect.left +
+        max(0, (work_rect.right - work_rect.left - width) / 2);
+    y = work_rect.top +
+        max(0, (work_rect.bottom - work_rect.top - height) / 2);
+  }
+
+  x = max(min_x, min(max_x, x));
+  y = max(min_y, min(max_y, y));
+
+  SetWindowPos(panel_hwnd, HWND_TOPMOST, x, y, width, height,
+               SWP_NOACTIVATE);
+  {
+    std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
+    if (m_ai_panel.panel_hwnd == panel_hwnd) {
+      m_ai_panel.last_panel_x = x;
+      m_ai_panel.last_panel_y = y;
+      m_ai_panel.has_last_panel_position = true;
+    }
+  }
+  _ResizeAIPanelWebView();
 }
 
 bool RimeWithWeaselHandler::_OpenAIPanel(WeaselSessionId ipc_id,
@@ -4382,28 +4592,9 @@ bool RimeWithWeaselHandler::_OpenAIPanel(WeaselSessionId ipc_id,
   EnableWindow(cancel_hwnd, TRUE);
   SetWindowTextW(cancel_hwnd, L"取消");
 
-  RECT work_rect = {0, 0, 0, 0};
-  HMONITOR monitor = nullptr;
-  if (target_hwnd && IsWindow(target_hwnd)) {
-    monitor = MonitorFromWindow(target_hwnd, MONITOR_DEFAULTTONEAREST);
-  }
-  if (!monitor) {
-    monitor = MonitorFromWindow(panel_hwnd, MONITOR_DEFAULTTONEAREST);
-  }
-  MONITORINFO monitor_info = {0};
-  monitor_info.cbSize = sizeof(monitor_info);
-  if (monitor && GetMonitorInfoW(monitor, &monitor_info)) {
-    work_rect = monitor_info.rcWork;
-  } else {
-    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work_rect, 0);
-  }
-  const int width = max(500, kAIPanelWidth);
-  const int height = max(360, kAIPanelHeight);
-  const int x = work_rect.left + max(0, (work_rect.right - work_rect.left - width) / 2);
-  const int y = work_rect.top + max(0, (work_rect.bottom - work_rect.top - height) / 2);
-
-  SetWindowPos(panel_hwnd, HWND_TOPMOST, x, y, width, height,
-               SWP_SHOWWINDOW | SWP_NOACTIVATE);
+  _ApplyAIPanelSizeAndReposition(0, 0, true);
+  SetWindowPos(panel_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE);
   ShowWindow(panel_hwnd, SW_SHOWNORMAL);
   UpdateWindow(panel_hwnd);
   PostMessageW(panel_hwnd, WM_AI_WEBVIEW_INIT, 0, 0);
@@ -5176,12 +5367,37 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
       if (!self) {
         return 0;
       }
+      std::wstring panel_url = u8tow(self->m_ai_config.panel_url);
+      const size_t hash_route = panel_url.find(L"#/");
+      if (hash_route != std::wstring::npos) {
+        const std::wstring hash_part = panel_url.substr(hash_route);
+        if (hash_part.find(L"#/rime-with-weasel") == 0 ||
+            hash_part.find(L"#/rime-input") == 0 ||
+            hash_part.find(L"#/rime-generating") == 0 ||
+            hash_part.find(L"#/rime-select") == 0) {
+          panel_url = panel_url.substr(0, hash_route) + L"#/rime-select";
+        }
+      }
+
       bool already_ready = false;
+      ICoreWebView2* existing_webview = nullptr;
       {
         std::lock_guard<std::mutex> lock(self->m_ai_panel_mutex);
         already_ready = self->m_ai_panel.webview != nullptr;
+        if (already_ready) {
+          existing_webview = static_cast<ICoreWebView2*>(self->m_ai_panel.webview);
+          if (existing_webview) {
+            existing_webview->AddRef();
+          }
+        }
       }
       if (already_ready) {
+        if (existing_webview && !panel_url.empty()) {
+          existing_webview->Navigate(panel_url.c_str());
+        }
+        if (existing_webview) {
+          existing_webview->Release();
+        }
         self->_ResizeAIPanelWebView();
         PostMessageW(hwnd, WM_AI_WEBVIEW_SYNC, 0, 0);
         return 0;
@@ -5192,7 +5408,6 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
         return 0;
       }
 
-      const std::wstring panel_url = u8tow(self->m_ai_config.panel_url);
       if (panel_url.empty()) {
         LOG(WARNING) << "AI panel url is empty.";
         return 0;
@@ -5314,6 +5529,12 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
                                     } else if (command.type ==
                                                "ui.drag.start") {
                                       PostMessageW(hwnd, WM_AI_PANEL_DRAG, 0, 0);
+                                    } else if (command.type ==
+                                               "ui.panel.resize") {
+                                      self->_ApplyAIPanelSizeAndReposition(
+                                          command.panel_width,
+                                          command.panel_height,
+                                          false);
                                     } else if (command.type ==
                                                "ui.auth.refresh_request") {
                                       self->_ForceAIAssistantRelogin();

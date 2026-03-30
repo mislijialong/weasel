@@ -129,6 +129,11 @@ struct AIPanelRuntime {
         output_text(),
         institution_options(),
         selected_institution_id(),
+        panel_width(760),
+        panel_height(580),
+        last_panel_x(0),
+        last_panel_y(0),
+        has_last_panel_position(false),
         webview_ready(false),
         requesting(false),
         institutions_loading(false),
@@ -151,6 +156,11 @@ struct AIPanelRuntime {
   std::wstring output_text;
   std::vector<AIPanelInstitutionOption> institution_options;
   std::wstring selected_institution_id;
+  int panel_width;
+  int panel_height;
+  int last_panel_x;
+  int last_panel_y;
+  bool has_last_panel_position;
   bool webview_ready;
   bool requesting;
   bool institutions_loading;
@@ -237,6 +247,9 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   void _SetAIPanelContextText(const std::wstring& context_text);
   void _SetAIPanelInstitutionSelection(const std::wstring& institution_id);
   void _HandleAIPanelWritebackRequest(const std::wstring& text);
+  void _ApplyAIPanelSizeAndReposition(int requested_width,
+                                      int requested_height,
+                                      bool prefer_anchor_position = false);
   void _StartAIAssistantStreamRequest(uint64_t request_id,
                                       const std::wstring& context_text,
                                       const std::wstring& app_key,
@@ -302,5 +315,7 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   std::string m_ai_login_client_id;
   AIPanelRuntime m_ai_panel;
   std::mutex m_ai_panel_mutex;
+  RECT m_last_input_rect;
+  bool m_has_last_input_rect;
   std::atomic<uint64_t> m_ai_request_seq;
 };
