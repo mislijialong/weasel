@@ -251,10 +251,7 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
                                       int requested_height,
                                       bool prefer_anchor_position = false);
   void _StartAIAssistantStreamRequest(uint64_t request_id,
-                                      const std::wstring& context_text,
-                                      const std::wstring& app_key,
-                                      const std::string& token,
-                                      const std::string& tenant_id);
+                                      const std::wstring& context_text);
   bool _SendTextToTargetWindow(HWND target_hwnd, const std::wstring& text);
   static LRESULT CALLBACK AIAssistantPanelWndProc(HWND hwnd,
                                                   UINT msg,
@@ -264,6 +261,7 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   std::wstring _CollectAIAssistantContext(WeaselSessionId ipc_id,
                                           const std::wstring& current_text);
   std::wstring _TakePendingCommitText(RimeSessionId session_id);
+  std::string _GetInputContentContextKey(WeaselSessionId ipc_id) const;
   std::string _GetContextCacheKey(WeaselSessionId ipc_id) const;
 
   void _UpdateInlinePreeditStatus(WeaselSessionId ipc_id);
@@ -305,6 +303,8 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   DWORD m_pid;
   AIAssistantConfig m_ai_config;
   InputContentStore m_input_content_store;
+  std::map<WeaselSessionId, std::string> m_input_focus_context_keys;
+  uint64_t m_input_focus_context_seq;
   std::thread m_ai_login_thread;
   std::mutex m_ai_login_mutex;
   std::atomic<bool> m_ai_login_pending;

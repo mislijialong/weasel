@@ -109,11 +109,11 @@ using CreateCoreWebView2EnvironmentWithOptionsFunc = HRESULT(STDAPICALLTYPE*)(
 #endif
 
 constexpr wchar_t kAIPanelWindowClass[] = L"WeaselAIAssistantPanelWindow";
-constexpr int kAIPanelWidth = 180;
-constexpr int kAIPanelHeight = 220;
-constexpr int kAIPanelMinWidth = 500;
+constexpr int kAIPanelWidth = 220;
+constexpr int kAIPanelHeight = 280;
+constexpr int kAIPanelMinWidth = 180;
 constexpr int kAIPanelMaxWidth = 860;
-constexpr int kAIPanelMinHeight = 320;
+constexpr int kAIPanelMinHeight = 220;
 constexpr int kAIPanelMaxHeight = 560;
 constexpr int kAIPanelScreenMargin = 8;
 constexpr int kAIPanelPadding = 0;
@@ -132,8 +132,6 @@ constexpr UINT WM_AI_WEBVIEW_INIT = WM_APP + 404;
 constexpr UINT WM_AI_PANEL_DESTROY = WM_APP + 405;
 constexpr UINT WM_AI_WEBVIEW_SYNC = WM_APP + 406;
 constexpr UINT WM_AI_PANEL_DRAG = WM_APP + 407;
-constexpr wchar_t kAppKeyChatMessagesEndpoint[] =
-    L"https://copilot.sino-bridge.com/v1/chat-messages";
 constexpr char kDefaultAIAssistantPrompt[] =
     "Continue the user's existing text. Reply with continuation only, with no "
     "explanation, no markdown, and no quotation marks.";
@@ -475,94 +473,6 @@ std::string BuildAIAssistantRequestBody(const AIAssistantConfig& config,
   body += "\"}]}";
   body += stream ? "],\"stream\":true}" : "],\"stream\":false}";
   return body;
-}
-
-std::string BuildAppKeyChatMessagesRequestBody(
-    const std::wstring& context_text,
-    const std::string& token,
-    const std::string& tenant_id) {
-  std::string body;
-  body.reserve(768 + context_text.size() * 3);
-  body += "{\"inputs\":{";
-  body += "\"type\":\"\",";
-  body += "\"libIds\":\"\",";
-  body += "\"token\":\"";
-  body += EscapeJsonString(token);
-  body += "\",";
-  body += "\"tenantid\":\"";
-  body += EscapeJsonString(tenant_id);
-  body += "\",";
-  body += "\"tenantId\":\"";
-  body += EscapeJsonString(tenant_id);
-  body += "\",";
-  body += "\"ruleDbType\":\"\"";
-  body += "},\"query\":\"";
-  body += EscapeJsonString(wtou8(context_text));
-  body += "\",\"response_mode\":\"streaming\",";
-  body += "\"conversation_id\":\"\",";
-  body += "\"user\":\"weasel-ai-panel\",";
-  body += "\"files\":[]}";
-  return body;
-}
-
-std::string ParseChatMessagesError(const std::string& response_body) {
-  if (response_body.empty()) {
-    return std::string();
-  }
-  rapidjson::Document document;
-  document.Parse(response_body.c_str(), response_body.size());
-  if (document.HasParseError() || !document.IsObject()) {
-    return std::string();
-  }
-  const auto read_string_member = [&document](const char* key) -> std::string {
-    const auto it = document.FindMember(key);
-    if (it == document.MemberEnd()) {
-      return std::string();
-    }
-    if (it->value.IsString()) {
-      return std::string(it->value.GetString(), it->value.GetStringLength());
-    }
-    if (it->value.IsInt64()) {
-      return std::to_string(it->value.GetInt64());
-    }
-    if (it->value.IsUint64()) {
-      return std::to_string(it->value.GetUint64());
-    }
-    if (it->value.IsInt()) {
-      return std::to_string(it->value.GetInt());
-    }
-    if (it->value.IsUint()) {
-      return std::to_string(it->value.GetUint());
-    }
-    return std::string();
-  };
-  std::string message = read_string_member("message");
-  if (message.empty()) {
-    message = read_string_member("msg");
-  }
-  if (message.empty()) {
-    message = read_string_member("error");
-  }
-  if (message.empty()) {
-    message = read_string_member("detail");
-  }
-  std::string code = read_string_member("code");
-  if (code.empty()) {
-    code = read_string_member("status");
-  }
-  if (code.empty()) {
-    code = read_string_member("statusCode");
-  }
-  if (!code.empty() && !message.empty()) {
-    return code + ": " + message;
-  }
-  if (!message.empty()) {
-    return message;
-  }
-  if (!code.empty()) {
-    return code;
-  }
-  return std::string();
 }
 
 void AppendResponseText(const rapidjson::Value& value, std::string* text) {
@@ -1127,256 +1037,6 @@ bool InvokeAIAssistantStream(
   if (!ParseAIAssistantResponse(body, &output_text, &parsed_error)) {
     if (error_message) {
       *error_message = parsed_error;
-    }
-    return false;
-  }
-  if (!output_text.empty() && on_delta) {
-    on_delta(output_text);
-  }
-  return true;
-}
-
-bool InvokeAppKeyChatMessagesStream(
-    const std::wstring& app_key,
-    const std::string& token,
-    const std::string& tenant_id,
-    const std::wstring& context_text,
-    const std::function<void(const std::wstring&)>& on_delta,
-    std::string* error_message) {
-  if (app_key.empty()) {
-    if (error_message) {
-      *error_message = "Selected agent appKey is empty.";
-    }
-    return false;
-  }
-  if (token.empty()) {
-    if (error_message) {
-      *error_message = "Login token is empty.";
-    }
-    return false;
-  }
-  if (tenant_id.empty()) {
-    if (error_message) {
-      *error_message = "TenantId is empty.";
-    }
-    return false;
-  }
-
-  URL_COMPONENTS parts = {0};
-  parts.dwStructSize = sizeof(parts);
-  parts.dwSchemeLength = static_cast<DWORD>(-1);
-  parts.dwHostNameLength = static_cast<DWORD>(-1);
-  parts.dwUrlPathLength = static_cast<DWORD>(-1);
-  parts.dwExtraInfoLength = static_cast<DWORD>(-1);
-  if (!WinHttpCrackUrl(kAppKeyChatMessagesEndpoint, 0, 0, &parts)) {
-    if (error_message) {
-      *error_message = "Unable to parse appKey chat endpoint URL.";
-    }
-    return false;
-  }
-
-  const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
-  std::wstring object_name =
-      parts.dwUrlPathLength > 0
-          ? std::wstring(parts.lpszUrlPath, parts.dwUrlPathLength)
-          : std::wstring(L"/");
-  if (parts.dwExtraInfoLength > 0) {
-    object_name.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
-  }
-
-  ScopedWinHttpHandle session(
-      WinHttpOpen(L"WeaselAIAssistantAppKey/1.0",
-                  WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
-                  WINHTTP_NO_PROXY_BYPASS, 0));
-  if (!session.valid()) {
-    if (error_message) {
-      *error_message = "WinHTTP session creation failed.";
-    }
-    return false;
-  }
-  WinHttpSetTimeouts(session.get(), 30000, 30000, 30000, 30000);
-
-  ScopedWinHttpHandle connection(
-      WinHttpConnect(session.get(), host.c_str(), parts.nPort, 0));
-  if (!connection.valid()) {
-    if (error_message) {
-      *error_message = "WinHTTP connection failed.";
-    }
-    return false;
-  }
-
-  const DWORD request_flags =
-      parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0;
-  ScopedWinHttpHandle request(
-      WinHttpOpenRequest(connection.get(), L"POST", object_name.c_str(), NULL,
-                         WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-                         request_flags));
-  if (!request.valid()) {
-    if (error_message) {
-      *error_message = "WinHTTP request creation failed.";
-    }
-    return false;
-  }
-
-  std::wstring headers = L"Content-Type: application/json\r\n";
-  headers += L"Accept: text/event-stream\r\n";
-  headers += L"Authorization: Bearer ";
-  headers += app_key;
-  headers += L"\r\n";
-  WinHttpAddRequestHeaders(request.get(), headers.c_str(),
-                           static_cast<DWORD>(-1),
-                           WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
-
-  const std::string request_body =
-      BuildAppKeyChatMessagesRequestBody(context_text, token, tenant_id);
-  if (!WinHttpSendRequest(request.get(), WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                          request_body.empty()
-                              ? WINHTTP_NO_REQUEST_DATA
-                              : reinterpret_cast<LPVOID>(
-                                    const_cast<char*>(request_body.data())),
-                          static_cast<DWORD>(request_body.size()),
-                          static_cast<DWORD>(request_body.size()), 0) ||
-      !WinHttpReceiveResponse(request.get(), nullptr)) {
-    if (error_message) {
-      *error_message = "Sending appKey chat request failed.";
-    }
-    return false;
-  }
-
-  DWORD status_code = 0;
-  DWORD status_code_size = sizeof(status_code);
-  WinHttpQueryHeaders(request.get(),
-                      WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                      WINHTTP_HEADER_NAME_BY_INDEX, &status_code,
-                      &status_code_size, WINHTTP_NO_HEADER_INDEX);
-
-  std::string body;
-  body.reserve(2048);
-  std::string line_buffer;
-  std::string event_payload;
-  line_buffer.reserve(1024);
-  bool saw_stream_frame = false;
-  const bool should_parse_stream = status_code >= 200 && status_code < 300;
-
-  const auto flush_event_payload = [&](const std::string& payload) -> bool {
-    if (payload.empty()) {
-      return true;
-    }
-    saw_stream_frame = true;
-    if (payload == "[DONE]") {
-      return true;
-    }
-    std::wstring delta;
-    if (!ParseAIAssistantStreamEvent(payload, &delta, nullptr)) {
-      return false;
-    }
-    if (!delta.empty() && on_delta) {
-      on_delta(delta);
-    }
-    return true;
-  };
-
-  const auto append_data_line = [&](const std::string& line) {
-    std::string data_part = line.substr(5);
-    size_t trim_index = 0;
-    while (trim_index < data_part.size() &&
-           std::isspace(static_cast<unsigned char>(data_part[trim_index]))) {
-      ++trim_index;
-    }
-    if (trim_index > 0) {
-      data_part.erase(0, trim_index);
-    }
-    if (!event_payload.empty()) {
-      event_payload.push_back('\n');
-    }
-    event_payload += data_part;
-  };
-
-  for (;;) {
-    DWORD available = 0;
-    if (!WinHttpQueryDataAvailable(request.get(), &available)) {
-      if (error_message) {
-        *error_message = "Failed to read appKey chat response.";
-      }
-      return false;
-    }
-    if (available == 0) {
-      break;
-    }
-    std::string chunk(available, '\0');
-    DWORD downloaded = 0;
-    if (!WinHttpReadData(request.get(), chunk.data(), available, &downloaded)) {
-      if (error_message) {
-        *error_message = "Failed while downloading appKey chat response.";
-      }
-      return false;
-    }
-    chunk.resize(downloaded);
-    body += chunk;
-
-    if (!should_parse_stream) {
-      continue;
-    }
-
-    for (char ch : chunk) {
-      if (ch == '\r') {
-        continue;
-      }
-      if (ch != '\n') {
-        line_buffer.push_back(ch);
-        continue;
-      }
-      if (line_buffer.empty()) {
-        if (!event_payload.empty()) {
-          if (!flush_event_payload(event_payload)) {
-            if (error_message) {
-              *error_message = "AppKey chat stream event payload is invalid.";
-            }
-            return false;
-          }
-          event_payload.clear();
-        }
-      } else if (line_buffer.rfind("data:", 0) == 0) {
-        append_data_line(line_buffer);
-      }
-      line_buffer.clear();
-    }
-  }
-
-  if (should_parse_stream) {
-    if (!line_buffer.empty() && line_buffer.rfind("data:", 0) == 0) {
-      append_data_line(line_buffer);
-    }
-    if (!event_payload.empty() && !flush_event_payload(event_payload)) {
-      if (error_message) {
-        *error_message = "AppKey chat stream tail payload is invalid.";
-      }
-      return false;
-    }
-  }
-
-  if (status_code < 200 || status_code >= 300) {
-    std::string parsed_error = ParseChatMessagesError(body);
-    if (parsed_error.empty()) {
-      parsed_error = "AppKey chat request returned HTTP " +
-                     std::to_string(status_code) + ".";
-    }
-    if (error_message) {
-      *error_message = parsed_error;
-    }
-    return false;
-  }
-
-  if (should_parse_stream && saw_stream_frame) {
-    return true;
-  }
-
-  std::string parsed_error;
-  std::wstring output_text;
-  if (!ParseAIAssistantResponse(body, &output_text, &parsed_error)) {
-    if (error_message) {
-      *error_message = parsed_error.empty() ? "AppKey chat response is empty."
-                                            : parsed_error;
     }
     return false;
   }
@@ -2242,6 +1902,69 @@ std::wstring UrlEncodeQueryComponent(const std::string& input) {
   return output;
 }
 
+std::wstring BuildAIPanelAuthQueryString(const std::string& token,
+                                         const std::string& tenant_id,
+                                         const std::string& refresh_token) {
+  std::wstring query;
+  auto append_pair = [&query](const wchar_t* key, const std::string& value) {
+    if (!key || !*key) {
+      return;
+    }
+    if (!query.empty()) {
+      query += L"&";
+    }
+    query += key;
+    query += L"=";
+    query += UrlEncodeQueryComponent(value);
+  };
+
+  append_pair(L"tenantid", tenant_id);
+  append_pair(L"token", token);
+  append_pair(L"tenantId", tenant_id);
+  append_pair(L"refreshToken", refresh_token);
+  return query;
+}
+
+std::wstring AppendAIPanelAuthToUrl(const std::wstring& panel_url,
+                                    const std::string& token,
+                                    const std::string& tenant_id,
+                                    const std::string& refresh_token) {
+  if (panel_url.empty()) {
+    return panel_url;
+  }
+  const std::wstring query =
+      BuildAIPanelAuthQueryString(token, tenant_id, refresh_token);
+
+  const size_t hash_pos = panel_url.find(L'#');
+  if (hash_pos == std::wstring::npos) {
+    std::wstring url = panel_url;
+    if (url.find(L'?') == std::wstring::npos) {
+      url += L"?";
+    } else if (!url.empty() && url.back() != L'?' && url.back() != L'&') {
+      url += L"&";
+    }
+    url += query;
+    return url;
+  }
+
+  std::wstring prefix = panel_url.substr(0, hash_pos);
+  std::wstring fragment = panel_url.substr(hash_pos + 1);
+  const size_t query_pos = fragment.find(L'?');
+  if (query_pos != std::wstring::npos) {
+    fragment = fragment.substr(0, query_pos);
+  }
+  if (fragment.empty()) {
+    fragment = L"/rime-with-weasel";
+  }
+
+  std::wstring result = prefix;
+  result += L"#";
+  result += fragment;
+  result += L"?";
+  result += query;
+  return result;
+}
+
 bool ParseHttpUrlOrigin(const std::wstring& url,
                         std::wstring* scheme,
                         std::wstring* host,
@@ -2499,6 +2222,37 @@ bool ParseAIPanelUiCommand(const std::wstring& message,
   return false;
 }
 
+std::wstring NormalizeReferencedContextText(const std::wstring& context_text) {
+  if (context_text.empty()) {
+    return context_text;
+  }
+
+  const std::string utf8 = wtou8(context_text);
+  rapidjson::Document doc;
+  if (doc.Parse(utf8.c_str()).HasParseError() || !doc.IsArray()) {
+    return context_text;
+  }
+
+  if (doc.Empty()) {
+    return std::wstring();
+  }
+
+  const rapidjson::Value& last = doc[doc.Size() - 1];
+  if (last.IsString()) {
+    return u8tow(last.GetString());
+  }
+  if (last.IsObject()) {
+    const char* keys[] = {"text", "content", "value"};
+    for (const char* key : keys) {
+      const auto member = last.FindMember(key);
+      if (member != last.MemberEnd() && member->value.IsString()) {
+        return u8tow(member->value.GetString());
+      }
+    }
+  }
+  return std::wstring();
+}
+
 std::string BuildAIPanelHostSyncMessage(
     const std::wstring& context_text,
     const std::wstring& status_text,
@@ -2510,12 +2264,14 @@ std::string BuildAIPanelHostSyncMessage(
     const std::string& token,
     const std::string& tenant_id,
     const std::string& refresh_token) {
+  const std::wstring normalized_context =
+      NormalizeReferencedContextText(context_text);
   std::string json;
-  json.reserve(1024 + context_text.size() * 3 + output_text.size() * 2 +
+  json.reserve(1024 + normalized_context.size() * 3 + output_text.size() * 2 +
                institution_options.size() * 96);
   json += "{\"v\":\"1.0\",\"type\":\"host.sync\",\"payload\":{";
   json += "\"context\":\"";
-  json += EscapeJsonString(wtou8(context_text));
+  json += EscapeJsonString(wtou8(normalized_context));
   json += "\",\"status\":\"";
   json += EscapeJsonString(wtou8(status_text));
   json += "\",\"output\":\"";
@@ -3186,6 +2942,8 @@ RimeWithWeaselHandler::RimeWithWeaselHandler(UI* ui)
       m_global_ascii_mode(false),
       m_show_notifications_time(1200),
       _UpdateUICallback(NULL),
+      m_input_focus_context_keys(),
+      m_input_focus_context_seq(0),
       m_ai_login_pending(false),
       m_ai_login_stop(false),
       m_last_input_rect{0, 0, 0, 0},
@@ -3210,6 +2968,8 @@ RimeWithWeaselHandler::~RimeWithWeaselHandler() {
   _StopAIAssistantLoginFlow();
   _DestroyAIPanel();
   m_input_content_store.Clear();
+  m_input_focus_context_keys.clear();
+  m_input_focus_context_seq = 0;
   m_show_notifications.clear();
   m_session_status_map.clear();
   m_app_options.clear();
@@ -3263,6 +3023,8 @@ void RimeWithWeaselHandler::Initialize() {
     return;
   }
 
+  m_input_focus_context_keys.clear();
+  m_input_focus_context_seq = 0;
   AppendInputContentInfoLogLine("InputContent logger_ready");
   LOG(INFO) << "Initializing la rime.";
   rime_api->initialize(NULL);
@@ -3307,6 +3069,8 @@ void RimeWithWeaselHandler::Finalize() {
   m_active_session = 0;
   m_disabled = true;
   m_input_content_store.Clear();
+  m_input_focus_context_keys.clear();
+  m_input_focus_context_seq = 0;
   m_session_status_map.clear();
   LOG(INFO) << "Finalizing la rime.";
   rime_api->finalize();
@@ -3380,6 +3144,7 @@ DWORD RimeWithWeaselHandler::RemoveSession(WeaselSessionId ipc_id) {
   DLOG(INFO) << "Remove session: session_id = " << to_session_id(ipc_id);
   // TODO: force committing? otherwise current composition would be lost
   rime_api->destroy_session(to_session_id(ipc_id));
+  m_input_focus_context_keys.erase(ipc_id);
   m_session_status_map.erase(ipc_id);
   m_active_session = 0;
   return 0;
@@ -3538,17 +3303,38 @@ void RimeWithWeaselHandler::FocusIn(DWORD client_caps, WeaselSessionId ipc_id) {
              << ", client_caps = " << client_caps;
   if (m_disabled)
     return;
-  const std::string context_key = _GetContextCacheKey(ipc_id);
-  m_input_content_store.OnContextSwitch(context_key);
-  AppendInputContentInfoLogLine("InputContent context_switch: context_key=" +
-                                context_key + ", ipc_id=" +
-                                std::to_string(ipc_id));
+  if (ipc_id != 0) {
+    const std::string base_key = _GetContextCacheKey(ipc_id);
+    std::string focus_key;
+    const auto existing = m_input_focus_context_keys.find(ipc_id);
+    const bool has_existing_focus =
+        existing != m_input_focus_context_keys.end() &&
+        !existing->second.empty();
+    if (has_existing_focus) {
+      focus_key = existing->second;
+    } else {
+      focus_key = base_key + "#focus:" +
+                  std::to_string(++m_input_focus_context_seq);
+      m_input_focus_context_keys[ipc_id] = focus_key;
+    }
+    m_input_content_store.OnContextSwitch(focus_key);
+    if (has_existing_focus) {
+      AppendInputContentInfoLogLine(
+          "InputContent context_reuse: base_key=" + base_key +
+          ", focus_key=" + focus_key + ", ipc_id=" + std::to_string(ipc_id));
+    } else {
+      AppendInputContentInfoLogLine(
+          "InputContent context_switch: base_key=" + base_key +
+          ", focus_key=" + focus_key + ", ipc_id=" + std::to_string(ipc_id));
+    }
+  }
   _UpdateUI(ipc_id);
   m_active_session = ipc_id;
 }
 
 void RimeWithWeaselHandler::FocusOut(DWORD param, WeaselSessionId ipc_id) {
   DLOG(INFO) << "Focus out: ipc_id = " << ipc_id;
+  m_input_focus_context_keys.erase(ipc_id);
   // Clear composition when focus is lost to prevent stale input state
   // This prevents prediction panel from appearing on next focus with certain key combinations
   rime_api->clear_composition(to_session_id(ipc_id));
@@ -4202,17 +3988,20 @@ bool RimeWithWeaselHandler::_TryProcessAIAssistantTrigger(KeyEvent keyEvent,
              << prompt_context.size();
   AppendAIAssistantContextDump(m_ai_config, context_source, target_hwnd,
                                prompt_context);
-  if (prompt_context.empty()) {
-    return true;
-  }
 
   if (_OpenAIPanel(ipc_id, target_hwnd, 0)) {
+    const std::wstring normalized_prompt_context =
+        NormalizeReferencedContextText(prompt_context);
     {
       std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
-      m_ai_panel.context_text = prompt_context;
+      m_ai_panel.context_text = normalized_prompt_context;
     }
     _ResetAIPanelOutput();
-    _SetAIPanelStatus(L"上下文已就绪，请在前端面板中发起请求。");
+    if (normalized_prompt_context.empty()) {
+      _SetAIPanelStatus(L"未检测到输入内容，请在前端面板中继续操作。");
+    } else {
+      _SetAIPanelStatus(L"上下文已就绪，请在前端面板中发起请求。");
+    }
     return true;
   }
 
@@ -4504,12 +4293,6 @@ void RimeWithWeaselHandler::_ApplyAIPanelSizeAndReposition(
   if (prefer_anchor_position && has_anchor) {
     x = anchor_rect.left;
     y = anchor_rect.bottom + 6;
-    if (y + height > work_rect.bottom - kAIPanelScreenMargin) {
-      const int above = anchor_rect.top - height - 6;
-      if (above >= min_y) {
-        y = above;
-      }
-    }
   } else if (has_last_position) {
     x = last_panel_x;
     y = last_panel_y;
@@ -4530,7 +4313,12 @@ void RimeWithWeaselHandler::_ApplyAIPanelSizeAndReposition(
   }
 
   x = max(min_x, min(max_x, x));
-  y = max(min_y, min(max_y, y));
+  if (prefer_anchor_position && has_anchor) {
+    // Ctrl+3 打开时固定锚在光标下方，不做“上翻”避让。
+    y = max(min_y, y);
+  } else {
+    y = max(min_y, min(max_y, y));
+  }
 
   SetWindowPos(panel_hwnd, HWND_TOPMOST, x, y, width, height,
                SWP_NOACTIVATE);
@@ -4812,13 +4600,7 @@ void RimeWithWeaselHandler::_RequestAIPanelGeneration() {
   HWND cancel_hwnd = nullptr;
   HWND panel_hwnd = nullptr;
   std::wstring context_text;
-  std::wstring selected_institution_id;
-  std::wstring selected_app_key;
   std::wstring status_text;
-  std::string login_token;
-  std::string login_tenant_id;
-  std::string login_refresh_token;
-  bool use_app_key_route = false;
   uint64_t request_id = 0;
   bool should_start = false;
 
@@ -4838,48 +4620,11 @@ void RimeWithWeaselHandler::_RequestAIPanelGeneration() {
     cancel_hwnd = m_ai_panel.cancel_hwnd;
     panel_hwnd = m_ai_panel.panel_hwnd;
     context_text = m_ai_panel.context_text;
-    selected_institution_id = m_ai_panel.selected_institution_id;
-    if (!selected_institution_id.empty()) {
-      for (const auto& option : m_ai_panel.institution_options) {
-        if (option.id == selected_institution_id) {
-          selected_app_key = option.app_key;
-          break;
-        }
-      }
-      if (selected_app_key.empty()) {
-        status_text = L"所选 agent 缺少 appKey，请重新选择。";
-      } else {
-        use_app_key_route = true;
-      }
-    }
   }
 
   if (status_text.empty()) {
     if (context_text.empty()) {
       status_text = L"上下文为空，无法发起请求。";
-    } else if (use_app_key_route) {
-      {
-        std::lock_guard<std::mutex> lock(m_ai_login_mutex);
-        login_token = m_ai_login_token;
-        login_tenant_id = m_ai_login_tenant_id;
-        login_refresh_token = m_ai_login_refresh_token;
-      }
-      if (login_tenant_id.empty() || (login_token.empty() && login_refresh_token.empty())) {
-        std::string file_token;
-        std::string file_tenant_id;
-        std::string file_refresh_token;
-        LoadAIAssistantLoginIdentity(m_ai_config, &file_token, &file_tenant_id,
-                                     &file_refresh_token);
-        if (!file_token.empty()) {
-          login_token = file_token;
-        }
-        if (!file_tenant_id.empty()) {
-          login_tenant_id = file_tenant_id;
-        }
-      }
-      if (login_tenant_id.empty() || login_token.empty()) {
-        status_text = L"登录状态无效，请先重新登录。";
-      }
     } else if (m_ai_config.endpoint.empty()) {
       status_text = L"AI 接口未配置，请先设置 endpoint。";
     }
@@ -4946,8 +4691,7 @@ void RimeWithWeaselHandler::_RequestAIPanelGeneration() {
   if (panel_hwnd && IsWindow(panel_hwnd)) {
     PostMessageW(panel_hwnd, WM_AI_WEBVIEW_SYNC, 0, 0);
   }
-  _StartAIAssistantStreamRequest(request_id, context_text, selected_app_key,
-                                 login_token, login_tenant_id);
+  _StartAIAssistantStreamRequest(request_id, context_text);
 }
 
 void RimeWithWeaselHandler::_ConfirmAIPanelOutput() {
@@ -5142,11 +4886,13 @@ void RimeWithWeaselHandler::_RefreshAIPanelInstitutionOptions() {
 
 void RimeWithWeaselHandler::_SetAIPanelContextText(
     const std::wstring& context_text) {
+  const std::wstring normalized_context =
+      NormalizeReferencedContextText(context_text);
   std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
   if (!m_ai_panel.panel_hwnd || !IsWindow(m_ai_panel.panel_hwnd)) {
     return;
   }
-  m_ai_panel.context_text = context_text;
+  m_ai_panel.context_text = normalized_context;
 }
 
 void RimeWithWeaselHandler::_HandleAIPanelWritebackRequest(
@@ -5202,10 +4948,7 @@ void RimeWithWeaselHandler::_SetAIPanelInstitutionSelection(
 
 void RimeWithWeaselHandler::_StartAIAssistantStreamRequest(
     uint64_t request_id,
-    const std::wstring& context_text,
-    const std::wstring& app_key,
-    const std::string& token,
-    const std::string& tenant_id) {
+    const std::wstring& context_text) {
   HWND panel_hwnd = nullptr;
   {
     std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
@@ -5216,9 +4959,7 @@ void RimeWithWeaselHandler::_StartAIAssistantStreamRequest(
   }
 
   const AIAssistantConfig request_config = m_ai_config;
-  const bool use_app_key_route = !app_key.empty();
-  std::thread([request_config, request_id, context_text, panel_hwnd, app_key,
-               token, tenant_id, use_app_key_route]() {
+  std::thread([request_config, request_id, context_text, panel_hwnd]() {
     const auto post_chunk = [panel_hwnd, request_id](const std::wstring& chunk) {
       if (chunk.empty()) {
         return;
@@ -5233,13 +4974,8 @@ void RimeWithWeaselHandler::_StartAIAssistantStreamRequest(
     };
 
     std::string error_message;
-    const bool ok =
-        use_app_key_route
-            ? InvokeAppKeyChatMessagesStream(app_key, token, tenant_id,
-                                             context_text, post_chunk,
-                                             &error_message)
-            : InvokeAIAssistantStream(request_config, context_text, post_chunk,
-                                      &error_message);
+    const bool ok = InvokeAIAssistantStream(request_config, context_text,
+                                            post_chunk, &error_message);
     AIPanelDoneMessage* done = new AIPanelDoneMessage();
     done->request_id = request_id;
     done->has_error = !ok;
@@ -5375,9 +5111,36 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
             hash_part.find(L"#/rime-input") == 0 ||
             hash_part.find(L"#/rime-generating") == 0 ||
             hash_part.find(L"#/rime-select") == 0) {
-          panel_url = panel_url.substr(0, hash_route) + L"#/rime-select";
+          panel_url = panel_url.substr(0, hash_route) + L"#/rime-with-weasel";
         }
       }
+      std::string token;
+      std::string tenant_id;
+      std::string refresh_token;
+      {
+        std::lock_guard<std::mutex> lock(self->m_ai_login_mutex);
+        token = self->m_ai_login_token;
+        tenant_id = self->m_ai_login_tenant_id;
+        refresh_token = self->m_ai_login_refresh_token;
+      }
+      if (tenant_id.empty() || (token.empty() && refresh_token.empty())) {
+        std::string file_token;
+        std::string file_tenant_id;
+        std::string file_refresh_token;
+        LoadAIAssistantLoginIdentity(self->m_ai_config, &file_token,
+                                     &file_tenant_id, &file_refresh_token);
+        if (!file_token.empty()) {
+          token = file_token;
+        }
+        if (!file_tenant_id.empty()) {
+          tenant_id = file_tenant_id;
+        }
+        if (!file_refresh_token.empty()) {
+          refresh_token = file_refresh_token;
+        }
+      }
+      panel_url =
+          AppendAIPanelAuthToUrl(panel_url, token, tenant_id, refresh_token);
 
       bool already_ready = false;
       ICoreWebView2* existing_webview = nullptr;
@@ -5708,7 +5471,7 @@ std::wstring RimeWithWeaselHandler::_CollectAIAssistantContext(
     WeaselSessionId ipc_id,
     const std::wstring& current_text) {
   return m_input_content_store.CollectContext(
-      _GetContextCacheKey(ipc_id), current_text,
+      _GetInputContentContextKey(ipc_id), current_text,
       static_cast<size_t>(max(1, m_ai_config.max_history_chars)));
 }
 
@@ -5717,12 +5480,21 @@ void RimeWithWeaselHandler::_AppendCommittedText(WeaselSessionId ipc_id,
   if (text.empty()) {
     return;
   }
-  const std::string context_key = _GetContextCacheKey(ipc_id);
+  const std::string context_key = _GetInputContentContextKey(ipc_id);
   m_input_content_store.AppendCommit(context_key, text);
   AppendInputContentInfoLogLine(
       "InputContent commit: context_key=" + context_key +
       ", chars=" + std::to_string(text.size()) + ", preview='" +
       BuildInputContentPreviewForLog(text) + "'");
+}
+
+std::string RimeWithWeaselHandler::_GetInputContentContextKey(
+    WeaselSessionId ipc_id) const {
+  const auto it = m_input_focus_context_keys.find(ipc_id);
+  if (it != m_input_focus_context_keys.end() && !it->second.empty()) {
+    return it->second;
+  }
+  return _GetContextCacheKey(ipc_id);
 }
 
 std::wstring RimeWithWeaselHandler::_TakePendingCommitText(

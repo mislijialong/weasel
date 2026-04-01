@@ -12,10 +12,8 @@ SwitcherSettingsDialog::SwitcherSettingsDialog(RimeSwitcherSettings* settings)
       ai_settings_(nullptr),
       loaded_(false),
       schema_modified_(false),
-      hotkeys_modified_(false),
       ai_hotkey_modified_(false),
       ai_hotkey_saved_(false),
-      initial_hotkeys_(),
       initial_ai_hotkey_() {
   api_ = (RimeLeversApi*)rime_get_api()->find_module("levers")->get_api();
   if (api_) {
@@ -69,23 +67,13 @@ void SwitcherSettingsDialog::Populate() {
       ++k;
     }
   }
-  auto hotkeys_str = api_->get_hotkeys(settings_);
-  if (hotkeys_str) {
-    std::wstring txt = u8tow(hotkeys_str);
-    hotkeys_.SetWindowTextW(txt.c_str());
-    initial_hotkeys_ = txt;
-  } else {
-    hotkeys_.SetWindowTextW(L"");
-    initial_hotkeys_.clear();
-  }
   const std::wstring ai_hotkey = LoadAIAssistantTriggerHotkey();
   ai_hotkey_.SetWindowTextW(ai_hotkey.c_str());
   initial_ai_hotkey_ = ai_hotkey;
   description_.SetWindowTextW(
-      BuildShortcutOverviewText(initial_hotkeys_, initial_ai_hotkey_).c_str());
+      BuildShortcutOverviewText(initial_ai_hotkey_).c_str());
   loaded_ = true;
   schema_modified_ = false;
-  hotkeys_modified_ = false;
   ai_hotkey_modified_ = false;
   ai_hotkey_saved_ = false;
 }
@@ -107,12 +95,6 @@ void SwitcherSettingsDialog::ShowDetails(RimeSchemaInfo* info) {
   description_.SetWindowTextW(txt.c_str());
 }
 
-std::wstring SwitcherSettingsDialog::ReadHotkeysText() const {
-  CString txt;
-  const_cast<CEdit&>(hotkeys_).GetWindowTextW(txt);
-  return std::wstring(txt.GetString());
-}
-
 std::wstring SwitcherSettingsDialog::ReadAIAssistantHotkeyText() const {
   CString txt;
   const_cast<CEdit&>(ai_hotkey_).GetWindowTextW(txt);
@@ -120,23 +102,17 @@ std::wstring SwitcherSettingsDialog::ReadAIAssistantHotkeyText() const {
 }
 
 std::wstring SwitcherSettingsDialog::BuildShortcutOverviewText(
-    const std::wstring& hotkeys,
     const std::wstring& ai_hotkey) const {
   std::wstring text =
       L"快捷键总览：\r\n"
-      L"1) 方案选单（可配置）: ";
-  text += hotkeys.empty() ? L"(未设置)" : hotkeys;
-  text +=
-      L"\r\n"
-      L"2) 中英切换（固定）: Ctrl+Space\r\n"
-      L"3) AI 面板（可配置）: ";
+      L"1) 中英切换（固定）: Ctrl+Space\r\n"
+      L"2) AI 面板（可配置）: ";
   text += ai_hotkey.empty() ? L"Control+3" : ai_hotkey;
   text +=
       L"\r\n"
-      L"4) 面板关闭（固定）: Esc\r\n"
+      L"3) 面板关闭（固定）: Esc\r\n"
       L"\r\n"
-      L"说明：这里可修改两项配置。方案选单快捷键保存到 default.custom.yaml 的 "
-      L"patch/switcher/hotkeys；AI 面板快捷键保存到 weasel.custom.yaml 的 "
+      L"说明：这里可修改 AI 面板快捷键，保存到 weasel.custom.yaml 的 "
       L"patch/ai_assistant/trigger_hotkey。";
   return text;
 }
@@ -174,9 +150,6 @@ LRESULT SwitcherSettingsDialog::OnInitDialog(UINT, WPARAM, LPARAM, BOOL&) {
   schema_list_.SetColumnWidth(0, rc.Width() - 20);
 
   description_.Attach(GetDlgItem(IDC_SCHEMA_DESCRIPTION));
-
-  hotkeys_.Attach(GetDlgItem(IDC_HOTKEYS));
-  hotkeys_.EnableWindow(TRUE);
 
   ai_hotkey_.Attach(GetDlgItem(IDC_AI_HOTKEY));
   ai_hotkey_.EnableWindow(TRUE);
@@ -223,15 +196,6 @@ LRESULT SwitcherSettingsDialog::OnOK(WORD, WORD code, HWND, BOOL&) {
     api_->select_schemas(settings_, selection, count);
     delete[] selection;
   }
-  if (hotkeys_modified_ && settings_) {
-    std::wstring hotkeys = ReadHotkeysText();
-    std::string hotkeys_utf8 = wtou8(hotkeys);
-    if (!api_->set_hotkeys(settings_, hotkeys_utf8.c_str())) {
-      MessageBoxW(L"快捷键格式无效。请使用逗号、分号或换行分隔，且至少保留一项。",
-                  L"智能输入法", MB_OK | MB_ICONEXCLAMATION);
-      return 0;
-    }
-  }
   if (ai_hotkey_modified_ && ai_settings_) {
     auto normalize = [](std::wstring value) {
       const wchar_t* spaces = L" \t\r\n";
@@ -260,28 +224,6 @@ LRESULT SwitcherSettingsDialog::OnOK(WORD, WORD code, HWND, BOOL&) {
   return 0;
 }
 
-LRESULT SwitcherSettingsDialog::OnHotkeysChanged(WORD, WORD, HWND, BOOL&) {
-  if (!loaded_) {
-    return 0;
-  }
-  auto normalize = [](std::wstring value) {
-    const wchar_t* spaces = L" \t\r\n";
-    const size_t begin = value.find_first_not_of(spaces);
-    if (begin == std::wstring::npos) {
-      return std::wstring();
-    }
-    const size_t end = value.find_last_not_of(spaces);
-    return value.substr(begin, end - begin + 1);
-  };
-  const std::wstring current = ReadHotkeysText();
-  hotkeys_modified_ = normalize(current) != normalize(initial_hotkeys_);
-  if (schema_list_.GetNextItem(-1, LVNI_SELECTED) < 0) {
-    description_.SetWindowTextW(
-        BuildShortcutOverviewText(current, ReadAIAssistantHotkeyText()).c_str());
-  }
-  return 0;
-}
-
 LRESULT SwitcherSettingsDialog::OnAIAssistantHotkeyChanged(WORD,
                                                            WORD,
                                                            HWND,
@@ -302,7 +244,7 @@ LRESULT SwitcherSettingsDialog::OnAIAssistantHotkeyChanged(WORD,
   ai_hotkey_modified_ = normalize(current) != normalize(initial_ai_hotkey_);
   if (schema_list_.GetNextItem(-1, LVNI_SELECTED) < 0) {
     description_.SetWindowTextW(
-        BuildShortcutOverviewText(ReadHotkeysText(), current).c_str());
+        BuildShortcutOverviewText(current).c_str());
   }
   return 0;
 }

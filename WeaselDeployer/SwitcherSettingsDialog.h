@@ -16,7 +16,6 @@ class SwitcherSettingsDialog : public CDialogImpl<SwitcherSettingsDialog> {
   BEGIN_MSG_MAP(SwitcherSettingsDialog)
   MESSAGE_HANDLER(WM_INITDIALOG, OnInitDialog)
   MESSAGE_HANDLER(WM_CLOSE, OnClose)
-  COMMAND_HANDLER(IDC_HOTKEYS, EN_CHANGE, OnHotkeysChanged)
   COMMAND_HANDLER(IDC_AI_HOTKEY, EN_CHANGE, OnAIAssistantHotkeyChanged)
   COMMAND_ID_HANDLER(IDOK, OnOK)
   NOTIFY_HANDLER(IDC_SCHEMA_LIST, LVN_ITEMCHANGED, OnSchemaListItemChanged)
@@ -24,17 +23,14 @@ class SwitcherSettingsDialog : public CDialogImpl<SwitcherSettingsDialog> {
 
   LRESULT OnInitDialog(UINT, WPARAM, LPARAM, BOOL&);
   LRESULT OnClose(UINT, WPARAM, LPARAM, BOOL&);
-  LRESULT OnHotkeysChanged(WORD, WORD, HWND, BOOL&);
   LRESULT OnAIAssistantHotkeyChanged(WORD, WORD, HWND, BOOL&);
   LRESULT OnOK(WORD, WORD, HWND, BOOL&);
   LRESULT OnSchemaListItemChanged(int, LPNMHDR, BOOL&);
 
   void Populate();
   void ShowDetails(RimeSchemaInfo* info);
-  std::wstring ReadHotkeysText() const;
   std::wstring ReadAIAssistantHotkeyText() const;
-  std::wstring BuildShortcutOverviewText(const std::wstring& hotkeys,
-                                         const std::wstring& ai_hotkey) const;
+  std::wstring BuildShortcutOverviewText(const std::wstring& ai_hotkey) const;
   std::wstring LoadAIAssistantTriggerHotkey() const;
 
   RimeLeversApi* api_;
@@ -42,14 +38,11 @@ class SwitcherSettingsDialog : public CDialogImpl<SwitcherSettingsDialog> {
   RimeCustomSettings* ai_settings_;
   bool loaded_;
   bool schema_modified_;
-  bool hotkeys_modified_;
   bool ai_hotkey_modified_;
   bool ai_hotkey_saved_;
-  std::wstring initial_hotkeys_;
   std::wstring initial_ai_hotkey_;
 
   CCheckListViewCtrl schema_list_;
   CStatic description_;
-  CEdit hotkeys_;
   CEdit ai_hotkey_;
 };
