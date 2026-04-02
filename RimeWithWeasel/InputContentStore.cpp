@@ -63,6 +63,15 @@ std::wstring InputContentStore::CollectContext(const std::string& context_key,
   std::wstring context;
 
   auto iter = contexts_.find(key);
+  if (iter == contexts_.end() || iter->second.records.empty()) {
+    // If the specified context is empty, fall back to "__global__" context.
+    // This handles the case where client_app changes from empty to valid after
+    // some text has already been committed to "__global__".
+    const std::string global_key = NormalizeKey("__global__");
+    if (global_key != key) {
+      iter = contexts_.find(global_key);
+    }
+  }
   if (iter != contexts_.end()) {
     std::vector<std::wstring> chunks;
     size_t used = current_text.size();

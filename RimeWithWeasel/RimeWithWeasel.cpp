@@ -2942,8 +2942,7 @@ RimeWithWeaselHandler::RimeWithWeaselHandler(UI* ui)
       m_global_ascii_mode(false),
       m_show_notifications_time(1200),
       _UpdateUICallback(NULL),
-      m_input_focus_context_keys(),
-      m_input_focus_context_seq(0),
+      m_input_active_context_key(),
       m_ai_login_pending(false),
       m_ai_login_stop(false),
       m_last_input_rect{0, 0, 0, 0},
@@ -2968,8 +2967,7 @@ RimeWithWeaselHandler::~RimeWithWeaselHandler() {
   _StopAIAssistantLoginFlow();
   _DestroyAIPanel();
   m_input_content_store.Clear();
-  m_input_focus_context_keys.clear();
-  m_input_focus_context_seq = 0;
+  m_input_active_context_key.clear();
   m_show_notifications.clear();
   m_session_status_map.clear();
   m_app_options.clear();
@@ -3023,8 +3021,7 @@ void RimeWithWeaselHandler::Initialize() {
     return;
   }
 
-  m_input_focus_context_keys.clear();
-  m_input_focus_context_seq = 0;
+  m_input_active_context_key.clear();
   AppendInputContentInfoLogLine("InputContent logger_ready");
   LOG(INFO) << "Initializing la rime.";
   rime_api->initialize(NULL);
@@ -3069,8 +3066,7 @@ void RimeWithWeaselHandler::Finalize() {
   m_active_session = 0;
   m_disabled = true;
   m_input_content_store.Clear();
-  m_input_focus_context_keys.clear();
-  m_input_focus_context_seq = 0;
+  m_input_active_context_key.clear();
   m_session_status_map.clear();
   LOG(INFO) << "Finalizing la rime.";
   rime_api->finalize();
@@ -3144,7 +3140,6 @@ DWORD RimeWithWeaselHandler::RemoveSession(WeaselSessionId ipc_id) {
   DLOG(INFO) << "Remove session: session_id = " << to_session_id(ipc_id);
   // TODO: force committing? otherwise current composition would be lost
   rime_api->destroy_session(to_session_id(ipc_id));
-  m_input_focus_context_keys.erase(ipc_id);
   m_session_status_map.erase(ipc_id);
   m_active_session = 0;
   return 0;
@@ -3304,29 +3299,11 @@ void RimeWithWeaselHandler::FocusIn(DWORD client_caps, WeaselSessionId ipc_id) {
   if (m_disabled)
     return;
   if (ipc_id != 0) {
-    const std::string base_key = _GetContextCacheKey(ipc_id);
-    std::string focus_key;
-    const auto existing = m_input_focus_context_keys.find(ipc_id);
-    const bool has_existing_focus =
-        existing != m_input_focus_context_keys.end() &&
-        !existing->second.empty();
-    if (has_existing_focus) {
-      focus_key = existing->second;
-    } else {
-      focus_key = base_key + "#focus:" +
-                  std::to_string(++m_input_focus_context_seq);
-      m_input_focus_context_keys[ipc_id] = focus_key;
-    }
-    m_input_content_store.OnContextSwitch(focus_key);
-    if (has_existing_focus) {
-      AppendInputContentInfoLogLine(
-          "InputContent context_reuse: base_key=" + base_key +
-          ", focus_key=" + focus_key + ", ipc_id=" + std::to_string(ipc_id));
-    } else {
-      AppendInputContentInfoLogLine(
-          "InputContent context_switch: base_key=" + base_key +
-          ", focus_key=" + focus_key + ", ipc_id=" + std::to_string(ipc_id));
-    }
+    const std::string context_key = _GetInputContentContextKey(ipc_id);
+    m_input_content_store.OnContextSwitch(context_key);
+    AppendInputContentInfoLogLine("InputContent context_switch: context_key=" +
+                                  context_key + ", ipc_id=" +
+                                  std::to_string(ipc_id));
   }
   _UpdateUI(ipc_id);
   m_active_session = ipc_id;
@@ -3334,7 +3311,6 @@ void RimeWithWeaselHandler::FocusIn(DWORD client_caps, WeaselSessionId ipc_id) {
 
 void RimeWithWeaselHandler::FocusOut(DWORD param, WeaselSessionId ipc_id) {
   DLOG(INFO) << "Focus out: ipc_id = " << ipc_id;
-  m_input_focus_context_keys.erase(ipc_id);
   // Clear composition when focus is lost to prevent stale input state
   // This prevents prediction panel from appearing on next focus with certain key combinations
   rime_api->clear_composition(to_session_id(ipc_id));
@@ -5489,12 +5465,24 @@ void RimeWithWeaselHandler::_AppendCommittedText(WeaselSessionId ipc_id,
 }
 
 std::string RimeWithWeaselHandler::_GetInputContentContextKey(
-    WeaselSessionId ipc_id) const {
-  const auto it = m_input_focus_context_keys.find(ipc_id);
-  if (it != m_input_focus_context_keys.end() && !it->second.empty()) {
-    return it->second;
+    WeaselSessionId ipc_id) {
+  const std::string context_key = _GetContextCacheKey(ipc_id);
+  const bool has_context_key = !context_key.empty() && context_key != "__global__";
+  if (has_context_key) {
+    if (!m_input_active_context_key.empty() &&
+        m_input_active_context_key != context_key) {
+      AppendInputContentInfoLogLine(
+          "InputContent context_reset: reason=app_switch, from=" +
+          m_input_active_context_key + ", to=" + context_key);
+      m_input_content_store.Clear();
+    }
+    m_input_active_context_key = context_key;
+    return m_input_active_context_key;
   }
-  return _GetContextCacheKey(ipc_id);
+  if (!m_input_active_context_key.empty()) {
+    return m_input_active_context_key;
+  }
+  return "__global__";
 }
 
 std::wstring RimeWithWeaselHandler::_TakePendingCommitText(

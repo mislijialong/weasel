@@ -101,12 +101,21 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Host "== Prepare packaging files =="
 New-Item -ItemType Directory -Path "output\data\opencc" -Force | Out-Null
+New-Item -ItemType Directory -Path "output\Win32" -Force | Out-Null
 
 Copy-Item -Force "output\weaselx64.dll" "output\weasel.dll"
 Copy-Item -Force "LICENSE.txt" "output\LICENSE.txt"
 Copy-Item -Force "README.md" "output\README.txt"
 Copy-Item -Force "plum\rime-install.bat" "output\rime-install.bat"
 Copy-Item -Force "librime\dist_lua_x64\lib\rime.dll" "output\rime.dll"
+if (Test-Path "librime\dist_lua_Win32\lib\rime.dll") {
+    Copy-Item -Force "librime\dist_lua_Win32\lib\rime.dll" "output\Win32\rime.dll"
+} elseif (Test-Path "librime\dist_Win32\lib\rime.dll") {
+    Copy-Item -Force "librime\dist_Win32\lib\rime.dll" "output\Win32\rime.dll"
+}
+if (-not (Test-Path "output\Win32\WinSparkle.dll") -and (Test-Path "output\WinSparkle.dll")) {
+    Copy-Item -Force "output\WinSparkle.dll" "output\Win32\WinSparkle.dll"
+}
 Copy-Item -Force "librime\share\opencc\*" "output\data\opencc\"
 
 $required = @(

@@ -261,7 +261,7 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   std::wstring _CollectAIAssistantContext(WeaselSessionId ipc_id,
                                           const std::wstring& current_text);
   std::wstring _TakePendingCommitText(RimeSessionId session_id);
-  std::string _GetInputContentContextKey(WeaselSessionId ipc_id) const;
+  std::string _GetInputContentContextKey(WeaselSessionId ipc_id);
   std::string _GetContextCacheKey(WeaselSessionId ipc_id) const;
 
   void _UpdateInlinePreeditStatus(WeaselSessionId ipc_id);
@@ -303,8 +303,7 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   DWORD m_pid;
   AIAssistantConfig m_ai_config;
   InputContentStore m_input_content_store;
-  std::map<WeaselSessionId, std::string> m_input_focus_context_keys;
-  uint64_t m_input_focus_context_seq;
+  std::string m_input_active_context_key;
   std::thread m_ai_login_thread;
   std::mutex m_ai_login_mutex;
   std::atomic<bool> m_ai_login_pending;
