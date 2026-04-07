@@ -22,8 +22,8 @@ ai_assistant:
   debug_dump_context: false
   debug_dump_path: "ai_context_dump.txt"
 
-  panel_url: "http://127.0.0.1:5173/wordmark-res"
-  panel_allowed_origin: "http://127.0.0.1:5173"
+  panel_url: "https://copilot.sino-bridge.com/toolbox/#/rime-with-weasel"
+  panel_allowed_origin: "https://copilot.sino-bridge.com"
 
   login_url: "https://copilot.sino-bridge.com/copilot-web-app/login?uuid={uuid}&fromType=plugIn&operationType=login"
   login_state_path: "ai_login_state.json"

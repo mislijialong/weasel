@@ -710,6 +710,6 @@ ai_assistant:
   debug_dump_context: true
   debug_dump_path: "ai_context_dump.txt"
 
-  panel_url: "http://localhost:5173/#/rime-with-weasel"
-  panel_allowed_origin: "http://localhost:5173"
+  panel_url: "https://copilot.sino-bridge.com/toolbox/#/rime-with-weasel"
+  panel_allowed_origin: "https://copilot.sino-bridge.com"
   
