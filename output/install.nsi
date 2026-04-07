@@ -252,16 +252,19 @@ program_files:
       File "WeaselServer.exe"
       File "rime.dll"
       File "WinSparkle.dll"
+      File /nonfatal "WebView2Loader.dll"
     ${ElseIf} ${IsNativeAMD64}
       File "WeaselDeployer.exe"
       File "WeaselServer.exe"
       File "rime.dll"
       File "WinSparkle.dll"
+      File /nonfatal "WebView2Loader.dll"
     ${Else}
       File "Win32\WeaselDeployer.exe"
       File "Win32\WeaselServer.exe"
       File "Win32\rime.dll"
       File "Win32\WinSparkle.dll"
+      File /nonfatal "Win32\WebView2Loader.dll"
     ${Endif}
   ; install x64 build for NativeAMD64_BELLOW_WINDOWS11
   ${Else} ; Windows 10 or bellow
@@ -270,13 +273,15 @@ program_files:
       File "WeaselServer.exe"
       File "rime.dll"
       File "WinSparkle.dll"
+      File /nonfatal "WebView2Loader.dll"
     ${Else}
       File "Win32\WeaselDeployer.exe"
       File "Win32\WeaselServer.exe"
       File "Win32\rime.dll"
       File "Win32\WinSparkle.dll"
-    ${Endif}
-  ${Endif}
+      File /nonfatal "Win32\WebView2Loader.dll"
+    ${EndIf}
+  ${EndIf}
 
   File "WeaselSetup.exe"
   ; shared data files

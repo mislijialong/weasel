@@ -116,7 +116,16 @@ if (Test-Path "librime\dist_lua_Win32\lib\rime.dll") {
 if (-not (Test-Path "output\Win32\WinSparkle.dll") -and (Test-Path "output\WinSparkle.dll")) {
     Copy-Item -Force "output\WinSparkle.dll" "output\Win32\WinSparkle.dll"
 }
+
+# The WebView2Loader.dll is required for AI panel. We only provide the x64 version.
+# To prevent NSIS errors for the Win32 version, we just copy the x64 version as a placeholder.
+if (Test-Path "third_party\webview2\pkg\build\native\x64\WebView2Loader.dll") {
+    Copy-Item -Force "third_party\webview2\pkg\build\native\x64\WebView2Loader.dll" "output\WebView2Loader.dll"
+    Copy-Item -Force "third_party\webview2\pkg\build\native\x64\WebView2Loader.dll" "output\Win32\WebView2Loader.dll"
+}
+
 Copy-Item -Force "librime\share\opencc\*" "output\data\opencc\"
+Copy-Item -Force "third_party\webview2\pkg\build\native\x64\WebView2Loader.dll" "output\WebView2Loader.dll"
 
 $required = @(
     "output\install.nsi",
