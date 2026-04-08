@@ -3,6 +3,7 @@
 #include <WeaselIPC.h>
 #include <WeaselUI.h>
 #include <atomic>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <string>
@@ -168,6 +169,11 @@ struct AIPanelRuntime {
   bool has_error;
 };
 
+struct SystemCommandLaunchRequest {
+  std::string command_id;
+  std::filesystem::path preferred_output_dir;
+};
+
 class RimeWithWeaselHandler : public weasel::RequestHandler {
  public:
   RimeWithWeaselHandler(weasel::UI* ui);
@@ -199,6 +205,8 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   virtual void UpdateColorTheme(BOOL darkMode);
 
   void OnUpdateUI(std::function<void()> const& cb);
+  void OnSystemCommand(
+      std::function<void(const SystemCommandLaunchRequest&)> const& cb);
 
  private:
   void _Setup();
@@ -261,6 +269,9 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   std::wstring _CollectAIAssistantContext(WeaselSessionId ipc_id,
                                           const std::wstring& current_text);
   std::wstring _TakePendingCommitText(RimeSessionId session_id);
+  bool _TryHandleSystemCommandCommit(std::wstring* commit_text,
+                                     WeaselSessionId ipc_id);
+  std::filesystem::path _ReadSystemCommandOutputDir(WeaselSessionId ipc_id) const;
   std::string _GetInputContentContextKey(WeaselSessionId ipc_id);
   std::string _GetContextCacheKey(WeaselSessionId ipc_id) const;
 
@@ -286,6 +297,8 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   std::map<std::string, bool> m_show_notifications;
   std::map<std::string, bool> m_show_notifications_base;
   std::function<void()> _UpdateUICallback;
+  std::function<void(const SystemCommandLaunchRequest&)>
+      m_system_command_callback;
 
   static void OnNotify(void* context_object,
                        uintptr_t session_id,

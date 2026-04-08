@@ -135,6 +135,13 @@ constexpr UINT WM_AI_PANEL_DRAG = WM_APP + 407;
 constexpr char kDefaultAIAssistantPrompt[] =
     "Continue the user's existing text. Reply with continuation only, with no "
     "explanation, no markdown, and no quotation marks.";
+constexpr wchar_t kSystemCommandCommitPrefix[] = L"__weasel_syscmd__:";
+constexpr const char* kAllowedSystemCommandIds[] = {"jsq",      "calc",
+                                                    "notepad",  "mspaint",
+                                                    "explorer", "txt",
+                                                    "md",       "gh",
+                                                    "bd",       "wb",
+                                                    "g",        "yt"};
 struct AIPanelTextMessage {
   uint64_t request_id = 0;
   std::wstring text;
@@ -154,6 +161,50 @@ struct AIPanelUiCommand {
   int panel_height = 0;
   std::string resize_reason;
 };
+
+bool IsAllowedSystemCommandId(const std::string& command_id) {
+  for (const char* allowed_id : kAllowedSystemCommandIds) {
+    if (command_id == allowed_id) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool TryParseSystemCommandMarker(const std::wstring& commit_text,
+                                 std::string* command_id) {
+  if (!command_id) {
+    return false;
+  }
+  const std::wstring prefix(kSystemCommandCommitPrefix);
+  if (!starts_with(commit_text, prefix) || commit_text.size() <= prefix.size()) {
+    return false;
+  }
+  const std::string candidate_id = wtou8(commit_text.substr(prefix.size()));
+  if (!IsAllowedSystemCommandId(candidate_id)) {
+    return false;
+  }
+  *command_id = candidate_id;
+  return true;
+}
+
+std::wstring ExpandEnvironmentVariables(const std::wstring& input) {
+  if (input.empty()) {
+    return input;
+  }
+  const DWORD required = ExpandEnvironmentStringsW(input.c_str(), nullptr, 0);
+  if (required == 0) {
+    return input;
+  }
+  std::wstring expanded(required, L'\0');
+  const DWORD written = ExpandEnvironmentStringsW(
+      input.c_str(), expanded.data(), static_cast<DWORD>(expanded.size()));
+  if (written == 0) {
+    return input;
+  }
+  expanded.resize(written > 0 ? written - 1 : 0);
+  return expanded;
+}
 
 void TryDisableAIPanelWindowBorder(HWND hwnd) {
   if (!hwnd) {
@@ -2942,6 +2993,7 @@ RimeWithWeaselHandler::RimeWithWeaselHandler(UI* ui)
       m_global_ascii_mode(false),
       m_show_notifications_time(1200),
       _UpdateUICallback(NULL),
+      m_system_command_callback(),
       m_input_active_context_key(),
       m_ai_login_pending(false),
       m_ai_login_stop(false),
@@ -3470,6 +3522,11 @@ void RimeWithWeaselHandler::SetOption(WeaselSessionId ipc_id,
 
 void RimeWithWeaselHandler::OnUpdateUI(std::function<void()> const& cb) {
   _UpdateUICallback = cb;
+}
+
+void RimeWithWeaselHandler::OnSystemCommand(
+    std::function<void(const SystemCommandLaunchRequest&)> const& cb) {
+  m_system_command_callback = cb;
 }
 
 void RimeWithWeaselHandler::_LoadAIAssistantConfig(RimeConfig* config) {
@@ -5496,6 +5553,67 @@ std::wstring RimeWithWeaselHandler::_TakePendingCommitText(
   return commit_text;
 }
 
+bool RimeWithWeaselHandler::_TryHandleSystemCommandCommit(
+    std::wstring* commit_text,
+    WeaselSessionId ipc_id) {
+  if (!commit_text || commit_text->empty() || !m_system_command_callback) {
+    return false;
+  }
+
+  std::string command_id;
+  if (!TryParseSystemCommandMarker(*commit_text, &command_id)) {
+    return false;
+  }
+
+  SystemCommandLaunchRequest request;
+  request.command_id = std::move(command_id);
+  request.preferred_output_dir = _ReadSystemCommandOutputDir(ipc_id);
+  m_system_command_callback(request);
+  commit_text->clear();
+  return true;
+}
+
+std::filesystem::path RimeWithWeaselHandler::_ReadSystemCommandOutputDir(
+    WeaselSessionId ipc_id) const {
+  const auto session_it = m_session_status_map.find(ipc_id);
+  if (session_it == m_session_status_map.end()) {
+    return std::filesystem::path();
+  }
+
+  std::string schema_id;
+  RIME_STRUCT(RimeStatus, status);
+  if (rime_api->get_status(session_it->second.session_id, &status)) {
+    schema_id = status.schema_id ? status.schema_id : std::string();
+    rime_api->free_status(&status);
+  }
+  if (schema_id.empty()) {
+    return std::filesystem::path();
+  }
+
+  RimeConfig config = {NULL};
+  if (!rime_api->schema_open(schema_id.c_str(), &config)) {
+    return std::filesystem::path();
+  }
+
+  std::string output_dir_utf8;
+  const bool has_output_dir =
+      ReadConfigString(&config, "system_cmd/output_dir", &output_dir_utf8);
+  rime_api->config_close(&config);
+  if (!has_output_dir || output_dir_utf8.empty()) {
+    return std::filesystem::path();
+  }
+
+  std::filesystem::path path(
+      ExpandEnvironmentVariables(u8tow(output_dir_utf8)));
+  if (path.empty()) {
+    return std::filesystem::path();
+  }
+  if (!path.is_absolute()) {
+    path = WeaselUserDataPath() / path;
+  }
+  return path;
+}
+
 std::string RimeWithWeaselHandler::_GetContextCacheKey(
     WeaselSessionId ipc_id) const {
   const auto it = m_session_status_map.find(ipc_id);
@@ -5755,6 +5873,7 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id,
   if (extra_commit && !extra_commit->empty()) {
     commit_text.append(*extra_commit);
   }
+  _TryHandleSystemCommandCommit(&commit_text, ipc_id);
   if (!commit_text.empty()) {
     actions.push_back("commit");
     body.append(L"commit=").append(escape_string(commit_text)).append(L"\n");

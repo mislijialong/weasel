@@ -6,9 +6,13 @@
 #include <WeaselUI.h>
 #include <RimeWithWeasel.h>
 #include <WeaselUtility.h>
+#include <condition_variable>
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <queue>
+#include <thread>
 #include <winsparkle.h>
 
 #include "WeaselTrayIcon.h"
@@ -62,9 +66,19 @@ class WeaselServerApp {
 
  protected:
   void SetupMenuHandlers();
+  void EnqueueSystemCommand(const SystemCommandLaunchRequest& request);
+  void StartLauncherWorker();
+  void StopLauncherWorker();
+  void RunLauncherWorker();
+  bool ExecuteSystemCommand(const SystemCommandLaunchRequest& request);
 
   weasel::Server m_server;
   weasel::UI m_ui;
   WeaselTrayIcon tray_icon;
   std::unique_ptr<RimeWithWeaselHandler> m_handler;
+  std::mutex m_launcher_mutex;
+  std::condition_variable m_launcher_cv;
+  std::queue<SystemCommandLaunchRequest> m_launch_queue;
+  bool m_launcher_stop = false;
+  std::thread m_launcher_thread;
 };
