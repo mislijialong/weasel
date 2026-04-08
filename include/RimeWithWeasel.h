@@ -251,6 +251,7 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   void _RequestAIPanelGeneration();
   void _ConfirmAIPanelOutput();
   void _CancelAIPanelOutput();
+  void _ExecuteAIPanelSystemCommand(const std::wstring& command_id);
   void _RefreshAIPanelInstitutionOptions();
   void _SetAIPanelContextText(const std::wstring& context_text);
   void _SetAIPanelInstitutionSelection(const std::wstring& institution_id);

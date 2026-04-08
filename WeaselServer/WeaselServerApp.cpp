@@ -234,8 +234,14 @@ bool WeaselServerApp::ExecuteSystemCommand(
   if (command_id == "g") {
     return open(L"https://google.com");
   }
+  if (command_id == "kb") {
+    return open(L"https://www.baidu.com");
+  }
   if (command_id == "yt") {
     return open(L"https://youtube.com");
+  }
+  if (command_id == "rili" || command_id == "calendar" || command_id == "cal") {
+    return open(L"outlookcal:");
   }
   if (command_id == "txt" || command_id == "md") {
     const wchar_t* extension = command_id == "md" ? L"md" : L"txt";

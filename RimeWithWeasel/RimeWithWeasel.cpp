@@ -109,8 +109,8 @@ using CreateCoreWebView2EnvironmentWithOptionsFunc = HRESULT(STDAPICALLTYPE*)(
 #endif
 
 constexpr wchar_t kAIPanelWindowClass[] = L"WeaselAIAssistantPanelWindow";
-constexpr int kAIPanelWidth = 220;
-constexpr int kAIPanelHeight = 280;
+constexpr int kAIPanelWidth = 540;
+constexpr int kAIPanelHeight = 360;
 constexpr int kAIPanelMinWidth = 180;
 constexpr int kAIPanelMaxWidth = 860;
 constexpr int kAIPanelMinHeight = 220;
@@ -136,12 +136,10 @@ constexpr char kDefaultAIAssistantPrompt[] =
     "Continue the user's existing text. Reply with continuation only, with no "
     "explanation, no markdown, and no quotation marks.";
 constexpr wchar_t kSystemCommandCommitPrefix[] = L"__weasel_syscmd__:";
-constexpr const char* kAllowedSystemCommandIds[] = {"jsq",      "calc",
-                                                    "notepad",  "mspaint",
-                                                    "explorer", "txt",
-                                                    "md",       "gh",
-                                                    "bd",       "wb",
-                                                    "g",        "yt"};
+constexpr const char* kAllowedSystemCommandIds[] = {
+    "jsq",       "calc",     "notepad",   "mspaint", "explorer",
+    "txt",       "md",       "gh",        "bd",      "wb",
+    "g",         "yt",       "rili",      "calendar", "cal", "kb"};
 struct AIPanelTextMessage {
   uint64_t request_id = 0;
   std::wstring text;
@@ -219,11 +217,9 @@ void TryDisableAIPanelWindowBorder(HWND hwnd) {
   auto set_window_attribute = reinterpret_cast<DwmSetWindowAttributeFn>(
       GetProcAddress(dwmapi, "DwmSetWindowAttribute"));
   if (set_window_attribute) {
-    constexpr DWORD kDWMWABorderColor = 34;
-    constexpr DWORD kDWMWAColorNone = 0xFFFFFFFE;
-    const DWORD border_color = kDWMWAColorNone;
-    set_window_attribute(hwnd, kDWMWABorderColor, &border_color,
-                         sizeof(border_color));
+    // 仅隐藏标题栏按钮区域，保留 resize 边框
+    constexpr DWORD kDWMWAAttribute = 2;  // DWMWA_EXTENDED_FRAME_BOUNDS
+    set_window_attribute(hwnd, kDWMWAAttribute, nullptr, 0);
   }
   FreeLibrary(dwmapi);
 }
@@ -2235,6 +2231,11 @@ bool ParseAIPanelUiCommand(const std::wstring& message,
       command->panel_width = width;
       command->panel_height = height;
       ReadStringLikeJsonMember(payload_ref, "reason", &command->resize_reason);
+    } else if (type == "ui.system_command") {
+      std::string text;
+      if (ReadStringLikeJsonMember(payload_ref, "text", &text)) {
+        command->text = u8tow(text);
+      }
     }
     return true;
   }
@@ -4081,7 +4082,7 @@ bool RimeWithWeaselHandler::_EnsureAIPanelWindow() {
       }
     }
 
-    const DWORD panel_style = WS_POPUP | WS_CLIPCHILDREN;
+    const DWORD panel_style = WS_POPUP | WS_CLIPCHILDREN | WS_SIZEBOX;
     HWND panel_hwnd = CreateWindowExW(
         WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kAIPanelWindowClass,
         L"Weasel AI Assistant", panel_style, CW_USEDEFAULT, CW_USEDEFAULT,
@@ -4770,6 +4771,31 @@ void RimeWithWeaselHandler::_CancelAIPanelOutput() {
   }
 }
 
+void RimeWithWeaselHandler::_ExecuteAIPanelSystemCommand(
+    const std::wstring& command_id) {
+  if (command_id.empty() || !m_system_command_callback) {
+    return;
+  }
+  std::string cmd_id_utf8 = wtou8(command_id);
+  if (!IsAllowedSystemCommandId(cmd_id_utf8)) {
+    return;
+  }
+  SystemCommandLaunchRequest request;
+  request.command_id = std::move(cmd_id_utf8);
+  m_system_command_callback(request);
+
+  // 执行完系统命令后关闭面板
+  HWND target_hwnd = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
+    target_hwnd = m_ai_panel.target_hwnd;
+  }
+  _CloseAIPanel();
+  if (target_hwnd && IsWindow(target_hwnd)) {
+    SetForegroundWindow(target_hwnd);
+  }
+}
+
 void RimeWithWeaselHandler::_RefreshAIPanelInstitutionOptions() {
   HWND panel_hwnd = nullptr;
   {
@@ -5128,6 +5154,19 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
       ReleaseCapture();
       SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
       return 0;
+    case WM_NCHITTEST: {
+      LRESULT hit = DefWindowProcW(hwnd, msg, wParam, lParam);
+      if (hit == HTCLIENT) {
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        POINT pt = {LOWORD(lParam), HIWORD(lParam)};
+        const int grip_size = 20;
+        if (pt.x >= rc.right - grip_size && pt.y >= rc.bottom - grip_size) {
+          return HTBOTTOMRIGHT;
+        }
+      }
+      return hit;
+    }
     case WM_DESTROY:
       PostQuitMessage(0);
       return 0;
@@ -5346,6 +5385,10 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
                                           L"请求已交给前端面板处理。");
                                     } else if (command.type == "ui.confirm") {
                                       self->_ConfirmAIPanelOutput();
+                                    } else if (command.type ==
+                                               "ui.system_command") {
+                                      self->_ExecuteAIPanelSystemCommand(
+                                          command.text);
                                     }
                                     return S_OK;
                                   })
