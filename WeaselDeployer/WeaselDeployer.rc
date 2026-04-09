@@ -104,7 +104,7 @@ BEGIN
     LTEXT           "AI 面板触发快捷键：",IDC_STATIC1,7,132,89,8
     EDITTEXT        IDC_AI_HOTKEY,7,147,302,14,ES_AUTOHSCROLL
     LTEXT           "点击输入框后按下组合键，例如 Ctrl+Shift+P。",IDC_AI_HOTKEY_HINT,7,163,302,16
-    DEFPUSHBUTTON   "中",IDOK,133,181,50,14
+    DEFPUSHBUTTON   "确认",IDOK,133,181,50,14
 END
 
 IDD_STYLE_SETTING DIALOGEX 0, 0, 316, 190
@@ -116,7 +116,7 @@ BEGIN
     LISTBOX         IDC_COLOR_SCHEME,7,21,147,138,LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
     CONTROL         "",IDC_PREVIEW,"Static",SS_BITMAP | SS_CENTERIMAGE,162,21,147,138
     PUSHBUTTON      "设定字体...",IDC_SELECT_FONT,7,169,53,14
-    DEFPUSHBUTTON   "中",IDOK,131,169,53,14
+    DEFPUSHBUTTON   "确认",IDOK,131,169,53,14
 END
 
 IDD_DICT_MANAGEMENT DIALOGEX 0, 0, 316, 185
@@ -202,7 +202,7 @@ BEGIN
     BEGIN
         BLOCK "080404b0"
         BEGIN
-            VALUE "Comments", "Powered by RIME | 中州韵输入法引擎"
+            VALUE "Comments", "Powered by RIME | 输入法引擎"
             VALUE "CompanyName", "神州新桥"
             VALUE "FileDescription", "智能输入法部署应用"
             VALUE "FileVersion", FILE_VERSION
@@ -244,7 +244,7 @@ BEGIN
     LISTBOX         IDC_COLOR_SCHEME,7,21,147,138,LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
     CONTROL         "",IDC_PREVIEW,"Static",SS_BITMAP | SS_CENTERIMAGE,162,21,147,138
     PUSHBUTTON      "設定字體...",IDC_SELECT_FONT,7,169,53,14
-    DEFPUSHBUTTON   "中",IDOK,131,169,53,14
+    DEFPUSHBUTTON   "確認",IDOK,131,169,53,14
 END
 
 IDD_SWITCHER_SETTING DIALOGEX 0, 0, 316, 202
@@ -258,7 +258,7 @@ BEGIN
     LTEXT           "AI 面板觸發快捷鍵：",IDC_STATIC1,7,132,89,8
     EDITTEXT        IDC_AI_HOTKEY,7,147,302,14,ES_AUTOHSCROLL
     LTEXT           "點擊輸入框後按下組合鍵，例如 Ctrl+Shift+P。",IDC_AI_HOTKEY_HINT,7,163,302,16
-    DEFPUSHBUTTON   "中",IDOK,133,181,50,14
+    DEFPUSHBUTTON   "確認",IDOK,133,181,50,14
 END
 
 IDD_DICT_MANAGEMENT DIALOGEX 0, 0, 316, 185
@@ -335,7 +335,7 @@ BEGIN
     BEGIN
         BLOCK "040404b0"
         BEGIN
-            VALUE "Comments", "Powered by RIME | 中州韻輸入法引擎"
+            VALUE "Comments", "Powered by RIME | 輸入法引擎"
             VALUE "CompanyName", "神州新桥"
             VALUE "FileDescription", "智能输入法部署應用"
             VALUE "FileVersion", FILE_VERSION

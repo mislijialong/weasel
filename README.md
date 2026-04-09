@@ -3,8 +3,6 @@
 
 基於 中州韻輸入法引擎／Rime Input Method Engine 等開源技術
 
-式恕堂 版權所無
-
 [![Download](https://img.shields.io/github/v/release/rime/weasel)](https://github.com/rime/weasel/releases/latest)
 [![Build status](https://github.com/rime/weasel/actions/workflows/commit-ci.yml/badge.svg)](https://github.com/rime/weasel/actions/workflows/commit-ci.yml)
 [![GitHub Tag](https://img.shields.io/github/tag/rime/weasel.svg)](https://github.com/rime/weasel)

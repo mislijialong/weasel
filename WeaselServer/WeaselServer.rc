@@ -104,7 +104,7 @@ BEGIN
     BEGIN
         BLOCK "080404b0"
         BEGIN
-            VALUE "Comments", "Powered by RIME | 中州韵输入法引擎"
+            VALUE "Comments", "Powered by RIME | 输入法引擎"
             VALUE "CompanyName", "神州新桥"
             VALUE "FileDescription", "智能输入法算法服务"
             VALUE "FileVersion", FILE_VERSION
@@ -211,7 +211,7 @@ BEGIN
     BEGIN
         BLOCK "040404b0"
         BEGIN
-            VALUE "Comments", "Powered by RIME | 中州韻輸入法引擎"
+            VALUE "Comments", "Powered by RIME | 輸入法引擎"
             VALUE "CompanyName", "神州新桥"
             VALUE "FileDescription", "智能输入法算法服務"
             VALUE "FileVersion", FILE_VERSION

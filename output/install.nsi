@@ -29,7 +29,7 @@ OutFile "archives\weasel-${PRODUCT_VERSION}-installer.exe"
 
 VIProductVersion "${WEASEL_VERSION}.${WEASEL_BUILD}"
 VIAddVersionKey /LANG=2052 "ProductName" "智能输入法"
-VIAddVersionKey /LANG=2052 "Comments" "Powered by RIME | 中州韻輸入法引擎"
+VIAddVersionKey /LANG=2052 "Comments" "Powered by RIME | 輸入法引擎"
 VIAddVersionKey /LANG=2052 "CompanyName" "神州新桥"
 VIAddVersionKey /LANG=2052 "LegalCopyright" "Copyleft RIME Developers"
 VIAddVersionKey /LANG=2052 "FileDescription" "智能输入法"
