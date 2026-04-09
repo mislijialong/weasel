@@ -34,8 +34,10 @@ void UIStyleSettingsDialog::Populate() {
 LRESULT UIStyleSettingsDialog::OnInitDialog(UINT, WPARAM, LPARAM, BOOL&) {
   color_schemes_.Attach(GetDlgItem(IDC_COLOR_SCHEME));
   preview_.Attach(GetDlgItem(IDC_PREVIEW));
-  select_font_.Attach(GetDlgItem(IDC_SELECT_FONT));
-  select_font_.EnableWindow(FALSE);
+  if (HWND select_font = GetDlgItem(IDC_SELECT_FONT)) {
+    select_font_.Attach(select_font);
+    select_font_.EnableWindow(FALSE);
+  }
 
   Populate();
 

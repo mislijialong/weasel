@@ -13,6 +13,7 @@
 #include <rime_api.h>
 #include <rime_levers_api.h>
 #pragma warning(default : 4005)
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include "WeaselDeployer.h"
@@ -67,6 +68,43 @@ static bool configure_switcher(RimeLeversApi* api,
   return false;
 }
 
+static bool seed_default_install_schema_selection(
+    RimeLeversApi* api,
+    RimeSwitcherSettings* switcher_settings) {
+  if (!api || !switcher_settings) {
+    return false;
+  }
+  if (!api->load_settings(
+          reinterpret_cast<RimeCustomSettings*>(switcher_settings))) {
+    return false;
+  }
+
+  RimeSchemaList available = {0};
+  if (!api->get_available_schema_list(switcher_settings, &available)) {
+    return false;
+  }
+
+  bool has_rime_ice = false;
+  for (size_t i = 0; i < available.size; ++i) {
+    if (available.list[i].schema_id &&
+        strcmp(available.list[i].schema_id, "rime_ice") == 0) {
+      has_rime_ice = true;
+      break;
+    }
+  }
+  api->schema_list_destroy(&available);
+  if (!has_rime_ice) {
+    return false;
+  }
+
+  const char* selection[] = {"rime_ice"};
+  if (!api->select_schemas(switcher_settings, selection, 1)) {
+    return false;
+  }
+  return api->save_settings(reinterpret_cast<RimeCustomSettings*>(
+      switcher_settings));
+}
+
 static bool configure_ui(RimeLeversApi* api,
                          UIStyleSettings* ui_style_settings,
                          bool* reconfigured) {
@@ -95,10 +133,16 @@ int Configurator::Run(bool installing) {
   RimeSwitcherSettings* switcher_settings = api->switcher_settings_init();
   UIStyleSettings ui_style_settings;
 
+  const bool first_run_switcher =
+      api->is_first_run((RimeCustomSettings*)switcher_settings);
   bool skip_switcher_settings =
-      installing && !api->is_first_run((RimeCustomSettings*)switcher_settings);
+      installing && !first_run_switcher;
   bool skip_ui_style_settings =
       installing && !api->is_first_run(ui_style_settings.settings());
+
+  if (installing && first_run_switcher) {
+    seed_default_install_schema_selection(api, switcher_settings);
+  }
 
   (skip_switcher_settings ||
    configure_switcher(api, switcher_settings, &reconfigured)) &&
