@@ -135,6 +135,7 @@ struct AIPanelRuntime {
         last_panel_x(0),
         last_panel_y(0),
         has_last_panel_position(false),
+        focus_pending(false),
         webview_ready(false),
         requesting(false),
         institutions_loading(false),
@@ -162,6 +163,7 @@ struct AIPanelRuntime {
   int last_panel_x;
   int last_panel_y;
   bool has_last_panel_position;
+  bool focus_pending;
   bool webview_ready;
   bool requesting;
   bool institutions_loading;

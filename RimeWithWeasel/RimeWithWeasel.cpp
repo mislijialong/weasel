@@ -132,6 +132,7 @@ constexpr UINT WM_AI_WEBVIEW_INIT = WM_APP + 404;
 constexpr UINT WM_AI_PANEL_DESTROY = WM_APP + 405;
 constexpr UINT WM_AI_WEBVIEW_SYNC = WM_APP + 406;
 constexpr UINT WM_AI_PANEL_DRAG = WM_APP + 407;
+constexpr UINT WM_AI_WEBVIEW_FOCUS = WM_APP + 408;
 constexpr char kDefaultAIAssistantPrompt[] =
     "Continue the user's existing text. Reply with continuation only, with no "
     "explanation, no markdown, and no quotation marks.";
@@ -4175,6 +4176,7 @@ bool RimeWithWeaselHandler::_EnsureAIPanelWindow() {
       m_ai_panel.last_panel_x = 0;
       m_ai_panel.last_panel_y = 0;
       m_ai_panel.has_last_panel_position = false;
+      m_ai_panel.focus_pending = false;
       m_ai_panel.webview_ready = false;
       m_ai_panel.requesting = false;
       m_ai_panel.institutions_loading = false;
@@ -4399,6 +4401,7 @@ bool RimeWithWeaselHandler::_OpenAIPanel(WeaselSessionId ipc_id,
     m_ai_panel.institutions_loading = true;
     m_ai_panel.completed = false;
     m_ai_panel.has_error = false;
+    m_ai_panel.focus_pending = true;
     panel_hwnd = m_ai_panel.panel_hwnd;
     status_hwnd = m_ai_panel.status_hwnd;
     output_hwnd = m_ai_panel.output_hwnd;
@@ -4419,6 +4422,7 @@ bool RimeWithWeaselHandler::_OpenAIPanel(WeaselSessionId ipc_id,
                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE);
   ShowWindow(panel_hwnd, SW_SHOWNORMAL);
   UpdateWindow(panel_hwnd);
+  PostMessageW(panel_hwnd, WM_AI_WEBVIEW_FOCUS, 0, 0);
   PostMessageW(panel_hwnd, WM_AI_WEBVIEW_INIT, 0, 0);
   PostMessageW(panel_hwnd, WM_AI_WEBVIEW_SYNC, 0, 0);
   _RefreshAIPanelInstitutionOptions();
@@ -4433,6 +4437,7 @@ void RimeWithWeaselHandler::_CloseAIPanel() {
     m_ai_panel.target_hwnd = nullptr;
     m_ai_panel.request_id = 0;
     m_ai_panel.ipc_id = 0;
+    m_ai_panel.focus_pending = false;
     m_ai_panel.status_text.clear();
     m_ai_panel.output_text.clear();
     m_ai_panel.requesting = false;
@@ -5346,6 +5351,8 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
                                     if (command.type == "ui.ready") {
                                       PostMessageW(hwnd, WM_AI_WEBVIEW_SYNC, 0,
                                                    0);
+                                      PostMessageW(hwnd, WM_AI_WEBVIEW_FOCUS, 1,
+                                                   0);
                                     } else if (command.type ==
                                                "ui.context.changed") {
                                       self->_SetAIPanelContextText(command.text);
@@ -5495,6 +5502,61 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
       const std::wstring sync_text = u8tow(sync_json);
       webview->PostWebMessageAsString(sync_text.c_str());
       webview->Release();
+#endif
+      return 0;
+    }
+    case WM_AI_WEBVIEW_FOCUS: {
+#if WEASEL_HAS_WEBVIEW2
+      if (!self) {
+        return 0;
+      }
+      const bool should_focus_webview = wParam != 0;
+
+      bool focus_pending = false;
+      ICoreWebView2Controller* controller = nullptr;
+      {
+        std::lock_guard<std::mutex> lock(self->m_ai_panel_mutex);
+        focus_pending = self->m_ai_panel.focus_pending;
+        if (focus_pending && should_focus_webview) {
+          controller = static_cast<ICoreWebView2Controller*>(
+              self->m_ai_panel.webview_controller);
+          if (controller) {
+            controller->AddRef();
+          }
+        }
+      }
+      if (!focus_pending) {
+        if (controller) {
+          controller->Release();
+        }
+        return 0;
+      }
+
+      ShowWindow(hwnd, SW_SHOWNORMAL);
+      HWND fg = GetForegroundWindow();
+      const DWORD fg_tid = fg ? GetWindowThreadProcessId(fg, nullptr) : 0;
+      const DWORD cur_tid = GetCurrentThreadId();
+      if (fg_tid != 0 && fg_tid != cur_tid) {
+        AttachThreadInput(cur_tid, fg_tid, TRUE);
+        SetForegroundWindow(hwnd);
+        SetActiveWindow(hwnd);
+        SetFocus(hwnd);
+        AttachThreadInput(cur_tid, fg_tid, FALSE);
+      } else {
+        SetForegroundWindow(hwnd);
+        SetActiveWindow(hwnd);
+        SetFocus(hwnd);
+      }
+
+      if (controller) {
+        const HRESULT hr =
+            controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+        controller->Release();
+        if (SUCCEEDED(hr)) {
+          std::lock_guard<std::mutex> lock(self->m_ai_panel_mutex);
+          self->m_ai_panel.focus_pending = false;
+        }
+      }
 #endif
       return 0;
     }
