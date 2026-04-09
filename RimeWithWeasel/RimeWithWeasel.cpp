@@ -3240,8 +3240,11 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
              << ", mask = " << keyEvent.mask << ", ipc_id = " << ipc_id;
   if (m_disabled)
     return FALSE;
+  // Let WebView2 handle Escape key for state navigation (select→input→generating)
+  // Frontend will call onBack() or onClose() based on current panel state
   if (!(keyEvent.mask & ibus::RELEASE_MASK) &&
       keyEvent.keycode == ibus::Keycode::Escape) {
+    DLOG(INFO) << "Escape key pressed, passing to WebView2";
     bool panel_open = false;
     {
       std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
@@ -3249,8 +3252,9 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
                    IsWindowVisible(m_ai_panel.panel_hwnd);
     }
     if (panel_open) {
-      _CancelAIPanelOutput();
-      return TRUE;
+      // Pass Escape to WebView2; frontend handles state navigation
+      // Return FALSE to pass key to WebView2, and return early to avoid Rime processing
+      return FALSE;
     }
   }
   if (_TryProcessAIAssistantTrigger(keyEvent, ipc_id, eat)) {
@@ -5304,10 +5308,12 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
                                             COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN ||
                                         key_event_kind ==
                                             COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN;
+                                    // Pass Escape to frontend for state navigation (select→input→generating)
+                                    // Frontend will handle onBack() or onClose()
                                     if (is_key_down &&
                                         virtual_key == static_cast<UINT>(VK_ESCAPE)) {
-                                      self->_CancelAIPanelOutput();
-                                      args->put_Handled(TRUE);
+                                      // Let frontend handle it; don't intercept
+                                      args->put_Handled(FALSE);
                                     }
                                     return S_OK;
                                   })
