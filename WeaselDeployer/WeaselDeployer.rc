@@ -65,6 +65,17 @@ BEGIN
     IDS_STR_DICT_SNAPSHOT   "词典快照"
     IDS_STR_KCSS_DICT_SNAPSHOT "KCSS格式词典快照"
     IDS_STR_HELP           "智能输入法部署应用的命令行参数：\n\n/?  - 显示帮助信息\n/help  - 显示帮助信息\n/deploy  - 更新工作区\n/dict  - 管理词典\n/sync  - 同步用户数据\n/install  - 安装智能输入法（初始部署）"
+    IDS_STR_AI_HOTKEY_HINT_DEFAULT "点击快捷键输入框后，按下所需组合键，例如 Ctrl+Shift+P。"
+    IDS_STR_AI_HOTKEY_HINT_PARTIAL "请继续按下主键完成录制。"
+    IDS_STR_AI_HOTKEY_HINT_EMPTY "当前已清空；保存时将恢复默认值 Control+3。"
+    IDS_STR_AI_HOTKEY_HINT_PARSE_ERROR "当前配置值无法识别；如需修复，请重新录制快捷键。"
+    IDS_STR_AI_HOTKEY_ERR_REQUIRE_MOD "AI 面板快捷键必须包含 Ctrl、Alt、Shift 或 Win。"
+    IDS_STR_AI_HOTKEY_ERR_RESERVED "Ctrl+Space 已保留给固定的中英切换快捷键。"
+    IDS_STR_AI_HOTKEY_OVERVIEW_TITLE "快捷键总览："
+    IDS_STR_AI_HOTKEY_OVERVIEW_FIXED_IME "1) 中英切换（固定）: Ctrl+Space"
+    IDS_STR_AI_HOTKEY_OVERVIEW_AI_PREFIX "2) AI 面板（可配置）: "
+    IDS_STR_AI_HOTKEY_OVERVIEW_FIXED_ESC "3) 面板关闭（固定）: Esc"
+    IDS_STR_AI_HOTKEY_OVERVIEW_NOTE "说明：点击快捷键输入框后按下组合键，保存到 weasel.custom.yaml 的 patch/ai_assistant/trigger_hotkey。"
 END
 
 #endif    // Chinese (Simplified) resources
@@ -82,7 +93,7 @@ LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED
 // Dialog
 //
 
-IDD_SWITCHER_SETTING DIALOGEX 0, 0, 316, 190
+IDD_SWITCHER_SETTING DIALOGEX 0, 0, 316, 202
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "【智能输入法】方案选单设定"
 FONT 9, "MS Shell Dlg", 400, 0, 0x1
@@ -92,7 +103,8 @@ BEGIN
     LTEXT           "选中列表中的输入方案以查看简介",IDC_SCHEMA_DESCRIPTION,144,21,165,103
     LTEXT           "AI 面板触发快捷键：",IDC_STATIC1,7,132,89,8
     EDITTEXT        IDC_AI_HOTKEY,7,147,302,14,ES_AUTOHSCROLL
-    DEFPUSHBUTTON   "中",IDOK,133,169,50,14
+    LTEXT           "点击输入框后按下组合键，例如 Ctrl+Shift+P。",IDC_AI_HOTKEY_HINT,7,163,302,16
+    DEFPUSHBUTTON   "中",IDOK,133,181,50,14
 END
 
 IDD_STYLE_SETTING DIALOGEX 0, 0, 316, 190
@@ -136,7 +148,7 @@ BEGIN
         LEFTMARGIN, 7
         RIGHTMARGIN, 309
         TOPMARGIN, 7
-        BOTTOMMARGIN, 183
+        BOTTOMMARGIN, 195
     END
 
     IDD_STYLE_SETTING, DIALOG
@@ -235,7 +247,7 @@ BEGIN
     DEFPUSHBUTTON   "中",IDOK,131,169,53,14
 END
 
-IDD_SWITCHER_SETTING DIALOGEX 0, 0, 316, 190
+IDD_SWITCHER_SETTING DIALOGEX 0, 0, 316, 202
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "【智能输入法】方案選單設定"
 FONT 9, "MS Shell Dlg", 400, 0, 0x1
@@ -245,7 +257,8 @@ BEGIN
     LTEXT           "選中列表中的輸入方案以查看簡介",IDC_SCHEMA_DESCRIPTION,144,21,165,103
     LTEXT           "AI 面板觸發快捷鍵：",IDC_STATIC1,7,132,89,8
     EDITTEXT        IDC_AI_HOTKEY,7,147,302,14,ES_AUTOHSCROLL
-    DEFPUSHBUTTON   "中",IDOK,133,169,50,14
+    LTEXT           "點擊輸入框後按下組合鍵，例如 Ctrl+Shift+P。",IDC_AI_HOTKEY_HINT,7,163,302,16
+    DEFPUSHBUTTON   "中",IDOK,133,181,50,14
 END
 
 IDD_DICT_MANAGEMENT DIALOGEX 0, 0, 316, 185
@@ -378,6 +391,17 @@ BEGIN
     IDS_STR_DICT_SNAPSHOT   "詞典快照"
     IDS_STR_KCSS_DICT_SNAPSHOT "KCSS格式詞典快照"
     IDS_STR_HELP            "智能输入法部署應用的命令行參數：\n\n/?  - 顯示幫助信息\n/help  - 顯示幫助信息\n/deploy  - 更新工作區\n/dict  - 管理詞典\n/sync  - 同步用戶數據\n/install  - 安裝智能输入法（初始部署）"
+    IDS_STR_AI_HOTKEY_HINT_DEFAULT "點擊快捷鍵輸入框後，按下所需組合鍵，例如 Ctrl+Shift+P。"
+    IDS_STR_AI_HOTKEY_HINT_PARTIAL "請繼續按下主鍵完成錄製。"
+    IDS_STR_AI_HOTKEY_HINT_EMPTY "目前已清空；儲存時將恢復預設值 Control+3。"
+    IDS_STR_AI_HOTKEY_HINT_PARSE_ERROR "目前配置值無法識別；如需修復，請重新錄製快捷鍵。"
+    IDS_STR_AI_HOTKEY_ERR_REQUIRE_MOD "AI 面板快捷鍵必須包含 Ctrl、Alt、Shift 或 Win。"
+    IDS_STR_AI_HOTKEY_ERR_RESERVED "Ctrl+Space 已保留給固定的中英切換快捷鍵。"
+    IDS_STR_AI_HOTKEY_OVERVIEW_TITLE "快捷鍵總覽："
+    IDS_STR_AI_HOTKEY_OVERVIEW_FIXED_IME "1) 中英切換（固定）: Ctrl+Space"
+    IDS_STR_AI_HOTKEY_OVERVIEW_AI_PREFIX "2) AI 面板（可配置）: "
+    IDS_STR_AI_HOTKEY_OVERVIEW_FIXED_ESC "3) 面板關閉（固定）: Esc"
+    IDS_STR_AI_HOTKEY_OVERVIEW_NOTE "說明：點擊快捷鍵輸入框後按下組合鍵，儲存到 weasel.custom.yaml 的 patch/ai_assistant/trigger_hotkey。"
 END
 
 #endif    // Chinese (Traditional, Taiwan) resources
@@ -407,7 +431,7 @@ BEGIN
     DEFPUSHBUTTON   "OK",IDOK,255,169,53,14
 END
 
-IDD_SWITCHER_SETTING DIALOGEX 0, 0, 316, 190
+IDD_SWITCHER_SETTING DIALOGEX 0, 0, 316, 202
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Select Schemas"
 FONT 9, "MS Shell Dlg", 400, 0, 0x1
@@ -417,8 +441,9 @@ BEGIN
     LTEXT           "Select a schema in the list to view an introduction",IDC_SCHEMA_DESCRIPTION,148,21,165,103
     LTEXT           "AI panel hotkey:",IDC_STATIC1,7,132,89,8
     EDITTEXT        IDC_AI_HOTKEY,7,147,302,14,ES_AUTOHSCROLL
-    PUSHBUTTON      "Get more input schemas...",IDC_GET_SCHEMATA,7,169,90,14
-    DEFPUSHBUTTON   "OK",IDOK,255,169,53,14
+    LTEXT           "Click the field, then press the shortcut you want to record.",IDC_AI_HOTKEY_HINT,7,163,302,16
+    PUSHBUTTON      "Get more input schemas...",IDC_GET_SCHEMATA,7,181,90,14
+    DEFPUSHBUTTON   "OK",IDOK,255,181,53,14
 END
 
 IDD_DICT_MANAGEMENT DIALOGEX 0, 0, 417, 265
@@ -554,6 +579,17 @@ BEGIN
     IDS_STR_DICT_SNAPSHOT   "Snapshot text file"
     IDS_STR_KCSS_DICT_SNAPSHOT "KCSS snapshot file"
     IDS_STR_HELP            "Command line parameters for Weasel Deployer:\n\n/?  - Display help information\n/help  - Display help information\n/deploy  - Update workspace\n/dict  - Manage dictionaries\n/sync  - Synchronize user data\n/install  - Install Weasel (initial deployment)"
+    IDS_STR_AI_HOTKEY_HINT_DEFAULT "Click the hotkey box, then press the desired key combination, for example Ctrl+Shift+P."
+    IDS_STR_AI_HOTKEY_HINT_PARTIAL "Press a non-modifier key to finish recording."
+    IDS_STR_AI_HOTKEY_HINT_EMPTY "The field is cleared. Saving will restore the default Control+3 hotkey."
+    IDS_STR_AI_HOTKEY_HINT_PARSE_ERROR "The current value is not recognized. Press a new shortcut to replace it."
+    IDS_STR_AI_HOTKEY_ERR_REQUIRE_MOD "The AI panel hotkey must include Ctrl, Alt, Shift, or Win."
+    IDS_STR_AI_HOTKEY_ERR_RESERVED "Ctrl+Space is reserved for the fixed IME toggle."
+    IDS_STR_AI_HOTKEY_OVERVIEW_TITLE "Shortcut overview:"
+    IDS_STR_AI_HOTKEY_OVERVIEW_FIXED_IME "1) IME toggle (fixed): Ctrl+Space"
+    IDS_STR_AI_HOTKEY_OVERVIEW_AI_PREFIX "2) AI panel (configurable): "
+    IDS_STR_AI_HOTKEY_OVERVIEW_FIXED_ESC "3) Close panel (fixed): Esc"
+    IDS_STR_AI_HOTKEY_OVERVIEW_NOTE "Tip: click the hotkey box and press a key combination. The value is saved to weasel.custom.yaml at patch/ai_assistant/trigger_hotkey."
 END
 
 

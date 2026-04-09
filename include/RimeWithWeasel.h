@@ -1,4 +1,5 @@
 #pragma once
+#include <AIAssistantHotkey.h>
 #include <InputContentStore.h>
 #include <WeaselIPC.h>
 #include <WeaselUI.h>
@@ -51,8 +52,7 @@ struct AIAssistantConfig {
         login_required(false),
         debug_dump_context(false),
         trigger_hotkey("Control+3"),
-        trigger_keycode('3'),
-        trigger_modifiers(ibus::CONTROL_MASK),
+        trigger_binding('3', ibus::CONTROL_MASK),
         endpoint(),
         api_key(),
         model("gpt-5"),
@@ -77,8 +77,7 @@ struct AIAssistantConfig {
   bool login_required;
   bool debug_dump_context;
   std::string trigger_hotkey;
-  UINT trigger_keycode;
-  UINT trigger_modifiers;
+  AiHotkeyBinding trigger_binding;
   std::string endpoint;
   std::string api_key;
   std::string model;

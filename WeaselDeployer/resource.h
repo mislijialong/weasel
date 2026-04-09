@@ -38,6 +38,17 @@
 #define IDS_STR_DICT_SNAPSHOT           156
 #define IDS_STR_KCSS_DICT_SNAPSHOT      157
 #define IDS_STR_HELP                    158
+#define IDS_STR_AI_HOTKEY_HINT_DEFAULT  159
+#define IDS_STR_AI_HOTKEY_HINT_PARTIAL  160
+#define IDS_STR_AI_HOTKEY_HINT_EMPTY    161
+#define IDS_STR_AI_HOTKEY_HINT_PARSE_ERROR 162
+#define IDS_STR_AI_HOTKEY_ERR_REQUIRE_MOD 163
+#define IDS_STR_AI_HOTKEY_ERR_RESERVED  164
+#define IDS_STR_AI_HOTKEY_OVERVIEW_TITLE 165
+#define IDS_STR_AI_HOTKEY_OVERVIEW_FIXED_IME 166
+#define IDS_STR_AI_HOTKEY_OVERVIEW_AI_PREFIX 167
+#define IDS_STR_AI_HOTKEY_OVERVIEW_FIXED_ESC 168
+#define IDS_STR_AI_HOTKEY_OVERVIEW_NOTE 169
 #define IDC_SCHEMA_LIST                 1000
 #define IDC_SCHEMA_DESCRIPTION          1001
 #define IDC_GET_SCHEMATA                1002
@@ -50,6 +61,7 @@
 #define IDC_EXPORT                      1010
 #define IDC_IMPORT                      1011
 #define IDC_AI_HOTKEY                  1012
+#define IDC_AI_HOTKEY_HINT             1013
 #define IDC_STATIC1                     -1
 
 // Next default values for new objects
@@ -59,7 +71,7 @@
 #define _APS_NO_MFC                     1
 #define _APS_NEXT_RESOURCE_VALUE        135
 #define _APS_NEXT_COMMAND_VALUE         32771
-#define _APS_NEXT_CONTROL_VALUE         1013
+#define _APS_NEXT_CONTROL_VALUE         1014
 #define _APS_NEXT_SYMED_VALUE           110
 #endif
 #endif
