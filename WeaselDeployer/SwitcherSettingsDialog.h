@@ -59,6 +59,7 @@ class AIAssistantHotkeyEdit
   std::string canonical_config_text_;
   bool has_parse_error_ = false;
   bool is_empty_ = false;
+  bool preserve_raw_text_ = false;
   bool showing_partial_capture_ = false;
   UINT partial_modifiers_ = 0;
 };

@@ -80,6 +80,7 @@ void AIAssistantHotkeyEdit::InitializeFromConfigText(
   canonical_config_text_.clear();
   has_parse_error_ = false;
   is_empty_ = raw_text.empty();
+  preserve_raw_text_ = false;
   showing_partial_capture_ = false;
   partial_modifiers_ = 0;
 
@@ -94,10 +95,18 @@ void AIAssistantHotkeyEdit::InitializeFromConfigText(
   if (TryParseAiHotkeyConfig(wtou8(raw_text), &parsed_binding)) {
     binding_ = parsed_binding;
     canonical_config_text_ = FormatAiHotkeyForConfig(binding_);
-    model_text_ = u8tow(canonical_config_text_);
-    display_text_ = FormatAiHotkeyForDisplay(binding_);
+    const AiHotkeyValidationResult validation =
+        ValidateAiHotkeyBinding(binding_);
+    if (validation.ok) {
+      model_text_ = u8tow(canonical_config_text_);
+      display_text_ = FormatAiHotkeyForDisplay(binding_);
+    } else {
+      preserve_raw_text_ = true;
+      display_text_ = raw_text;
+    }
   } else {
     has_parse_error_ = true;
+    preserve_raw_text_ = true;
     display_text_ = raw_text;
   }
 
@@ -195,6 +204,7 @@ void AIAssistantHotkeyEdit::ClearBinding() {
   canonical_config_text_.clear();
   has_parse_error_ = false;
   is_empty_ = true;
+  preserve_raw_text_ = false;
   showing_partial_capture_ = false;
   partial_modifiers_ = 0;
   SetDisplayText(display_text_);
@@ -208,6 +218,7 @@ void AIAssistantHotkeyEdit::CommitBinding(const AiHotkeyBinding& binding) {
   display_text_ = FormatAiHotkeyForDisplay(binding_);
   has_parse_error_ = false;
   is_empty_ = false;
+  preserve_raw_text_ = false;
   showing_partial_capture_ = false;
   partial_modifiers_ = 0;
   SetDisplayText(display_text_);
@@ -223,7 +234,7 @@ void AIAssistantHotkeyEdit::NotifyParentStateChanged() const {
 void AIAssistantHotkeyEdit::RestoreCommittedDisplay() {
   showing_partial_capture_ = false;
   partial_modifiers_ = 0;
-  if (has_parse_error_) {
+  if (preserve_raw_text_) {
     display_text_ = model_text_;
   } else if (is_empty_) {
     display_text_.clear();
@@ -290,7 +301,7 @@ void SwitcherSettingsDialog::Populate() {
   RimeSchemaList selected = {0};
   api_->get_selected_schema_list(settings_, &selected);
   schema_list_.DeleteAllItems();
-  size_t index = 0;
+  int index = 0;
   std::set<RimeSchemaInfo*> recruited;
   for (size_t i = 0; i < selected.size; ++i) {
     const char* schema_id = selected.list[i].schema_id;

@@ -215,6 +215,11 @@
     <ResourceCompile Include="WeaselDeployer.rc" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\RimeWithWeasel\RimeWithWeasel.vcxproj">
+      <Project>{1c497821-bd63-4f02-9094-32b185b62f23}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <LinkLibraryDependencies>true</LinkLibraryDependencies>
+    </ProjectReference>
     <ProjectReference Include="..\WeaselIPC\WeaselIPC.vcxproj">
       <Project>{ce11a2df-8d20-4b07-a935-4b0d03f0303d}</Project>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>

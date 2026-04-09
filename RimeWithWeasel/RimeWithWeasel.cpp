@@ -3430,7 +3430,8 @@ void RimeWithWeaselHandler::_LoadAIAssistantConfig(RimeConfig* config) {
     m_ai_config.trigger_hotkey = "Control+3";
   }
   if (!TryParseAiHotkeyConfig(m_ai_config.trigger_hotkey,
-                              &m_ai_config.trigger_binding)) {
+                              &m_ai_config.trigger_binding) ||
+      !ValidateAiHotkeyBinding(m_ai_config.trigger_binding).ok) {
     LOG(WARNING) << "Invalid ai_assistant/trigger_hotkey: "
                  << m_ai_config.trigger_hotkey
                  << "; fallback to Control+3.";
@@ -3915,7 +3916,8 @@ bool RimeWithWeaselHandler::_EnsureAIPanelWindow() {
       }
     }
 
-    const DWORD panel_style = WS_POPUP | WS_CLIPCHILDREN | WS_SIZEBOX;
+    // Remove WS_SIZEBOX to hide default border, use custom resize handling via WM_NCHITTEST
+    const DWORD panel_style = WS_POPUP | WS_CLIPCHILDREN;
     HWND panel_hwnd = CreateWindowExW(
         WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kAIPanelWindowClass,
         L"Weasel AI Assistant", panel_style, CW_USEDEFAULT, CW_USEDEFAULT,
@@ -4996,10 +4998,42 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
       if (hit == HTCLIENT) {
         RECT rc;
         GetClientRect(hwnd, &rc);
-        POINT pt = {LOWORD(lParam), HIWORD(lParam)};
-        const int grip_size = 20;
-        if (pt.x >= rc.right - grip_size && pt.y >= rc.bottom - grip_size) {
+        // 将屏幕坐标转换为客户区坐标
+        POINT pt;
+        pt.x = LOWORD(lParam);
+        pt.y = HIWORD(lParam);
+        ScreenToClient(hwnd, &pt);
+        const int grip_size = 16;  // 调整大小热区大小
+        const int x = pt.x;
+        const int y = pt.y;
+        const int w = rc.right;
+        const int h = rc.bottom;
+
+        // 四个角
+        if (x < grip_size && y < grip_size) {
+          return HTTOPLEFT;
+        }
+        if (x >= w - grip_size && y < grip_size) {
+          return HTTOPRIGHT;
+        }
+        if (x < grip_size && y >= h - grip_size) {
+          return HTBOTTOMLEFT;
+        }
+        if (x >= w - grip_size && y >= h - grip_size) {
           return HTBOTTOMRIGHT;
+        }
+        // 四个边
+        if (y < grip_size) {
+          return HTTOP;
+        }
+        if (y >= h - grip_size) {
+          return HTBOTTOM;
+        }
+        if (x < grip_size) {
+          return HTLEFT;
+        }
+        if (x >= w - grip_size) {
+          return HTRIGHT;
         }
       }
       return hit;

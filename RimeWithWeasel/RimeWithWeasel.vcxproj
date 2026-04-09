@@ -260,6 +260,9 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="AIAssistantHotkey.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="InputContentStore.cpp" />
     <ClCompile Include="RimeWithWeasel.cpp" />
     <ClCompile Include="stdafx.cpp">
@@ -275,6 +278,7 @@
     <ClCompile Include="WeaselUtility.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\include\AIAssistantHotkey.h" />
     <ClInclude Include="..\include\InputContentStore.h" />
     <ClInclude Include="..\include\RimeWithWeasel.h" />
     <ClInclude Include="..\include\WeaselUtility.h" />

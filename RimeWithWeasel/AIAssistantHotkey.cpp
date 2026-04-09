@@ -1,5 +1,3 @@
-#include "stdafx.h"
-
 #include <AIAssistantHotkey.h>
 
 #include <algorithm>
@@ -39,6 +37,9 @@ std::string ToLowerAscii(std::string input) {
 UINT NormalizeAiHotkeyKeycode(UINT keycode) {
   if (keycode >= 'A' && keycode <= 'Z') {
     return keycode - 'A' + 'a';
+  }
+  if (keycode == ibus::grave) {
+    return '`';
   }
   switch (keycode) {
     case '!':
@@ -217,18 +218,21 @@ bool TryParseNamedHotkeyKey(const std::string& token, UINT* keycode) {
   }
   if (token.size() > 1 && token[0] == 'f') {
     bool all_digits = true;
+    int function_key = 0;
     for (size_t i = 1; i < token.size(); ++i) {
-      if (!std::isdigit(static_cast<unsigned char>(token[i]))) {
+      const unsigned char ch = static_cast<unsigned char>(token[i]);
+      if (!std::isdigit(ch)) {
         all_digits = false;
         break;
       }
-    }
-    if (all_digits) {
-      const int function_key = std::stoi(token.substr(1));
-      if (function_key >= 1 && function_key <= 24) {
-        *keycode = static_cast<UINT>(ibus::F1 + function_key - 1);
-        return true;
+      function_key = function_key * 10 + (ch - '0');
+      if (function_key > 24) {
+        return false;
       }
+    }
+    if (all_digits && function_key >= 1) {
+      *keycode = static_cast<UINT>(ibus::F1 + function_key - 1);
+      return true;
     }
   }
 
@@ -271,7 +275,7 @@ bool TryGetHotkeyKeyLabels(UINT keycode,
       *display_label = std::wstring(1, static_cast<wchar_t>(ch));
       return true;
     }
-    case ibus::grave:
+    case '`':
       *config_label = "`";
       *display_label = L"`";
       return true;
