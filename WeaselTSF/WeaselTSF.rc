@@ -115,7 +115,7 @@ BEGIN
         MENUITEM "程序文件夹 (&P)",                  ID_WEASELTRAY_INSTALLDIR
         MENUITEM "日志文件夹 (&L)",                  ID_WEASELTRAY_LOGDIR
         MENUITEM SEPARATOR
-        MENUITEM "检查新版本 (&U)",                  ID_WEASELTRAY_CHECKUPDATE
+        // MENUITEM "检查新版本 (&U)",                  ID_WEASELTRAY_CHECKUPDATE
         MENUITEM "重新部署 (&R)",                   ID_WEASELTRAY_DEPLOY
         MENUITEM SEPARATOR
         MENUITEM "重启算法服务 (&E)",                 ID_WEASELTRAY_RERUN_SERVICE

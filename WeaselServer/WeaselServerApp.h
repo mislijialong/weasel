@@ -38,18 +38,19 @@ class WeaselServerApp {
   }
 
   static bool check_update() {
-    // when checked manually, show testing versions too
-    std::string feed_url = GetCustomResource("ManualUpdateFeedURL", "APPCAST");
-    std::wstring channel{};
-    auto ret = RegGetStringValue(HKEY_CURRENT_USER, L"Software\\Rime\\Weasel",
-                                 L"UpdateChannel", channel);
-    if (!ret && channel == L"testing") {
-      feed_url = GetCustomResource("TestingManualUpdateFeedURL", "APPCAST");
-    }
-    if (!feed_url.empty()) {
-      win_sparkle_set_appcast_url(feed_url.c_str());
-    }
-    win_sparkle_check_update_with_ui();
+    // 暂时关闭检查新版本功能
+    // // when checked manually, show testing versions too
+    // std::string feed_url = GetCustomResource("ManualUpdateFeedURL", "APPCAST");
+    // std::wstring channel{};
+    // auto ret = RegGetStringValue(HKEY_CURRENT_USER, L"Software\\Rime\\Weasel",
+    //                              L"UpdateChannel", channel);
+    // if (!ret && channel == L"testing") {
+    //   feed_url = GetCustomResource("TestingManualUpdateFeedURL", "APPCAST");
+    // }
+    // if (!feed_url.empty()) {
+    //   win_sparkle_set_appcast_url(feed_url.c_str());
+    // }
+    // win_sparkle_check_update_with_ui();
     return true;
   }
 
