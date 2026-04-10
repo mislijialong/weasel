@@ -117,6 +117,8 @@ constexpr int kAIPanelMinHeight = 220;
 constexpr int kAIPanelMaxHeight = 560;
 constexpr int kAIPanelScreenMargin = 8;
 constexpr int kAIPanelPadding = 0;
+constexpr int kAIPanelResizeHitBand = 1;
+constexpr int kAIPanelResizeHitTestBand = 4;
 constexpr int kAIPanelCornerRadius = 12;
 constexpr int kAIPanelButtonWidth = 96;
 constexpr int kAIPanelButtonHeight = 30;
@@ -133,6 +135,11 @@ constexpr UINT WM_AI_PANEL_DESTROY = WM_APP + 405;
 constexpr UINT WM_AI_WEBVIEW_SYNC = WM_APP + 406;
 constexpr UINT WM_AI_PANEL_DRAG = WM_APP + 407;
 constexpr UINT WM_AI_WEBVIEW_FOCUS = WM_APP + 408;
+constexpr UINT kWMNcuahDrawCaption = 0x00AE;
+constexpr UINT kWMNcuahDrawFrame = 0x00AF;
+constexpr int kAIPanelResizeEdgeNone = 0;
+constexpr int kAIPanelResizeEdgeRight = 1;
+constexpr int kAIPanelResizeEdgeBottom = 2;
 constexpr char kDefaultAIAssistantPrompt[] =
     "Continue the user's existing text. Reply with continuation only, with no "
     "explanation, no markdown, and no quotation marks.";
@@ -218,9 +225,12 @@ void TryDisableAIPanelWindowBorder(HWND hwnd) {
   auto set_window_attribute = reinterpret_cast<DwmSetWindowAttributeFn>(
       GetProcAddress(dwmapi, "DwmSetWindowAttribute"));
   if (set_window_attribute) {
-    // 仅隐藏标题栏按钮区域，保留 resize 边框
-    constexpr DWORD kDWMWAAttribute = 2;  // DWMWA_EXTENDED_FRAME_BOUNDS
-    set_window_attribute(hwnd, kDWMWAAttribute, nullptr, 0);
+    // Hide the visible DWM border while keeping the resize frame behavior.
+    constexpr DWORD kDWMWABorderColor = 34;
+    constexpr COLORREF kDwmColorNone =
+        static_cast<COLORREF>(0xFFFFFFFE);
+    set_window_attribute(hwnd, kDWMWABorderColor, &kDwmColorNone,
+                         sizeof(kDwmColorNone));
   }
   FreeLibrary(dwmapi);
 }
@@ -340,33 +350,39 @@ void LayoutAIPanelControls(HWND hwnd) {
   }
   const int client_width = client_rect.right - client_rect.left;
   const int client_height = client_rect.bottom - client_rect.top;
+  const int content_width =
+      max(1, client_width - kAIPanelResizeHitBand);
+  const int content_height =
+      max(1, client_height - kAIPanelResizeHitBand);
   const bool hide_native_header_footer =
       status_hwnd && request_hwnd && confirm_hwnd && cancel_hwnd &&
       !IsWindowVisible(status_hwnd) && !IsWindowVisible(request_hwnd) &&
       !IsWindowVisible(confirm_hwnd) && !IsWindowVisible(cancel_hwnd);
   if (hide_native_header_footer) {
     MoveWindow(output_hwnd, kAIPanelPadding, kAIPanelPadding,
-               max(1, client_width - kAIPanelPadding * 2),
-               max(1, client_height - kAIPanelPadding * 2), TRUE);
+               max(1, content_width - kAIPanelPadding * 2),
+               max(1, content_height - kAIPanelPadding * 2), TRUE);
     return;
   }
   const int button_gap = 8;
   const int status_height = 22;
   const int output_top = kAIPanelPadding + status_height + 8;
-  const int button_top = client_height - kAIPanelPadding - kAIPanelButtonHeight;
+  const int button_top =
+      content_height - kAIPanelPadding - kAIPanelButtonHeight;
   const int output_height = max(80, button_top - output_top - 10);
-  const int button_y = client_height - kAIPanelPadding - kAIPanelButtonHeight;
+  const int button_y =
+      content_height - kAIPanelPadding - kAIPanelButtonHeight;
   const int cancel_x =
-      client_width - kAIPanelPadding - kAIPanelButtonWidth;
+      content_width - kAIPanelPadding - kAIPanelButtonWidth;
   const int confirm_x = cancel_x - button_gap - kAIPanelButtonWidth;
   const int request_x = confirm_x - button_gap - kAIPanelButtonWidth;
 
   if (status_hwnd) {
     MoveWindow(status_hwnd, kAIPanelPadding, kAIPanelPadding,
-               client_width - kAIPanelPadding * 2, status_height, TRUE);
+               content_width - kAIPanelPadding * 2, status_height, TRUE);
   }
   MoveWindow(output_hwnd, kAIPanelPadding, output_top,
-             client_width - kAIPanelPadding * 2, output_height, TRUE);
+             content_width - kAIPanelPadding * 2, output_height, TRUE);
   if (request_hwnd) {
     MoveWindow(request_hwnd, request_x, button_y, kAIPanelButtonWidth,
                kAIPanelButtonHeight, TRUE);
@@ -379,6 +395,31 @@ void LayoutAIPanelControls(HWND hwnd) {
     MoveWindow(cancel_hwnd, cancel_x, button_y, kAIPanelButtonWidth,
                kAIPanelButtonHeight, TRUE);
   }
+}
+
+int HitTestAIPanelResizeEdges(HWND hwnd, const POINT& screen_point) {
+  RECT client_rect = {0};
+  if (!hwnd || !GetClientRect(hwnd, &client_rect)) {
+    return kAIPanelResizeEdgeNone;
+  }
+  POINT client_point = screen_point;
+  if (!ScreenToClient(hwnd, &client_point)) {
+    return kAIPanelResizeEdgeNone;
+  }
+  if (client_point.x < 0 || client_point.y < 0 ||
+      client_point.x >= client_rect.right ||
+      client_point.y >= client_rect.bottom) {
+    return kAIPanelResizeEdgeNone;
+  }
+
+  int edges = kAIPanelResizeEdgeNone;
+  if (client_point.x >= client_rect.right - kAIPanelResizeHitTestBand) {
+    edges |= kAIPanelResizeEdgeRight;
+  }
+  if (client_point.y >= client_rect.bottom - kAIPanelResizeHitTestBand) {
+    edges |= kAIPanelResizeEdgeBottom;
+  }
+  return edges;
 }
 
 #if WEASEL_HAS_WEBVIEW2
@@ -3916,7 +3957,6 @@ bool RimeWithWeaselHandler::_EnsureAIPanelWindow() {
       }
     }
 
-    // Remove WS_SIZEBOX to hide default border, use custom resize handling via WM_NCHITTEST
     const DWORD panel_style = WS_POPUP | WS_CLIPCHILDREN;
     HWND panel_hwnd = CreateWindowExW(
         WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kAIPanelWindowClass,
@@ -4010,6 +4050,14 @@ bool RimeWithWeaselHandler::_EnsureAIPanelWindow() {
       m_ai_panel.last_panel_x = 0;
       m_ai_panel.last_panel_y = 0;
       m_ai_panel.has_last_panel_position = false;
+      m_ai_panel.resize_tracking = false;
+      m_ai_panel.resize_edges = kAIPanelResizeEdgeNone;
+      m_ai_panel.resize_start_screen_x = 0;
+      m_ai_panel.resize_start_screen_y = 0;
+      m_ai_panel.resize_start_window_x = 0;
+      m_ai_panel.resize_start_window_y = 0;
+      m_ai_panel.resize_start_width = 0;
+      m_ai_panel.resize_start_height = 0;
       m_ai_panel.focus_pending = false;
       m_ai_panel.webview_ready = false;
       m_ai_panel.requesting = false;
@@ -4052,6 +4100,14 @@ bool RimeWithWeaselHandler::_EnsureAIPanelWindow() {
         m_ai_panel.last_panel_x = 0;
         m_ai_panel.last_panel_y = 0;
         m_ai_panel.has_last_panel_position = false;
+        m_ai_panel.resize_tracking = false;
+        m_ai_panel.resize_edges = kAIPanelResizeEdgeNone;
+        m_ai_panel.resize_start_screen_x = 0;
+        m_ai_panel.resize_start_screen_y = 0;
+        m_ai_panel.resize_start_window_x = 0;
+        m_ai_panel.resize_start_window_y = 0;
+        m_ai_panel.resize_start_width = 0;
+        m_ai_panel.resize_start_height = 0;
         m_ai_panel.webview_ready = false;
         m_ai_panel.requesting = false;
         m_ai_panel.institutions_loading = false;
@@ -4947,7 +5003,150 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
   RimeWithWeaselHandler* self = reinterpret_cast<RimeWithWeaselHandler*>(
       GetWindowLongPtrW(hwnd, GWLP_USERDATA));
   switch (msg) {
+    case kWMNcuahDrawCaption:
+    case kWMNcuahDrawFrame:
+    case WM_NCACTIVATE:
+      return TRUE;
+    case WM_NCPAINT:
+      return 0;
+    case WM_SETCURSOR:
+      if (LOWORD(lParam) == HTCLIENT) {
+        POINT cursor_point = {0, 0};
+        if (GetCursorPos(&cursor_point)) {
+          const int edges = HitTestAIPanelResizeEdges(hwnd, cursor_point);
+          if ((edges & kAIPanelResizeEdgeRight) &&
+              (edges & kAIPanelResizeEdgeBottom)) {
+            SetCursor(LoadCursor(nullptr, IDC_SIZENWSE));
+            return TRUE;
+          }
+          if (edges & kAIPanelResizeEdgeRight) {
+            SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
+            return TRUE;
+          }
+          if (edges & kAIPanelResizeEdgeBottom) {
+            SetCursor(LoadCursor(nullptr, IDC_SIZENS));
+            return TRUE;
+          }
+        }
+      }
+      break;
+    case WM_GETMINMAXINFO: {
+      MINMAXINFO* minmax_info = reinterpret_cast<MINMAXINFO*>(lParam);
+      if (!minmax_info) {
+        return 0;
+      }
+      minmax_info->ptMinTrackSize.x = kAIPanelMinWidth;
+      minmax_info->ptMinTrackSize.y = kAIPanelMinHeight;
+      minmax_info->ptMaxTrackSize.x = kAIPanelMaxWidth;
+      minmax_info->ptMaxTrackSize.y = kAIPanelMaxHeight;
+      return 0;
+    }
+    case WM_LBUTTONDOWN:
+      if (self) {
+        POINT cursor_point = {0, 0};
+        if (GetCursorPos(&cursor_point)) {
+          const int edges = HitTestAIPanelResizeEdges(hwnd, cursor_point);
+          if (edges != kAIPanelResizeEdgeNone) {
+            RECT window_rect = {0, 0, 0, 0};
+            if (GetWindowRect(hwnd, &window_rect)) {
+              std::lock_guard<std::mutex> lock(self->m_ai_panel_mutex);
+              if (self->m_ai_panel.panel_hwnd == hwnd) {
+                self->m_ai_panel.resize_tracking = true;
+                self->m_ai_panel.resize_edges = edges;
+                self->m_ai_panel.resize_start_screen_x = cursor_point.x;
+                self->m_ai_panel.resize_start_screen_y = cursor_point.y;
+                self->m_ai_panel.resize_start_window_x = window_rect.left;
+                self->m_ai_panel.resize_start_window_y = window_rect.top;
+                self->m_ai_panel.resize_start_width =
+                    window_rect.right - window_rect.left;
+                self->m_ai_panel.resize_start_height =
+                    window_rect.bottom - window_rect.top;
+              }
+            }
+            SetCapture(hwnd);
+            return 0;
+          }
+        }
+      }
+      break;
+    case WM_MOUSEMOVE:
+      if (self) {
+        bool resize_tracking = false;
+        int resize_edges = kAIPanelResizeEdgeNone;
+        int start_screen_x = 0;
+        int start_screen_y = 0;
+        int start_window_x = 0;
+        int start_window_y = 0;
+        int start_width = 0;
+        int start_height = 0;
+        {
+          std::lock_guard<std::mutex> lock(self->m_ai_panel_mutex);
+          if (self->m_ai_panel.panel_hwnd == hwnd) {
+            resize_tracking = self->m_ai_panel.resize_tracking;
+            resize_edges = self->m_ai_panel.resize_edges;
+            start_screen_x = self->m_ai_panel.resize_start_screen_x;
+            start_screen_y = self->m_ai_panel.resize_start_screen_y;
+            start_window_x = self->m_ai_panel.resize_start_window_x;
+            start_window_y = self->m_ai_panel.resize_start_window_y;
+            start_width = self->m_ai_panel.resize_start_width;
+            start_height = self->m_ai_panel.resize_start_height;
+          }
+        }
+        if (resize_tracking) {
+          POINT cursor_point = {0, 0};
+          if (GetCursorPos(&cursor_point)) {
+            int width = start_width;
+            int height = start_height;
+            if (resize_edges & kAIPanelResizeEdgeRight) {
+              width = start_width + (cursor_point.x - start_screen_x);
+            }
+            if (resize_edges & kAIPanelResizeEdgeBottom) {
+              height = start_height + (cursor_point.y - start_screen_y);
+            }
+            width = max(kAIPanelMinWidth, min(kAIPanelMaxWidth, width));
+            height = max(kAIPanelMinHeight, min(kAIPanelMaxHeight, height));
+            SetWindowPos(hwnd, HWND_TOPMOST, start_window_x, start_window_y,
+                         width, height, SWP_NOACTIVATE);
+            return 0;
+          }
+        }
+      }
+      break;
+    case WM_CANCELMODE:
+    case WM_LBUTTONUP:
+      if (GetCapture() == hwnd) {
+        ReleaseCapture();
+      }
+      break;
+    case WM_CAPTURECHANGED:
+      if (self) {
+        std::lock_guard<std::mutex> lock(self->m_ai_panel_mutex);
+        if (self->m_ai_panel.panel_hwnd == hwnd) {
+          self->m_ai_panel.resize_tracking = false;
+          self->m_ai_panel.resize_edges = kAIPanelResizeEdgeNone;
+        }
+      }
+      return 0;
     case WM_SIZE:
+      if (self) {
+        RECT window_rect = {0, 0, 0, 0};
+        if (GetWindowRect(hwnd, &window_rect)) {
+          const int width = max(
+              kAIPanelMinWidth,
+              min(kAIPanelMaxWidth, window_rect.right - window_rect.left));
+          const int height = max(
+              kAIPanelMinHeight,
+              min(kAIPanelMaxHeight, window_rect.bottom - window_rect.top));
+          std::lock_guard<std::mutex> lock(self->m_ai_panel_mutex);
+          if (self->m_ai_panel.panel_hwnd == hwnd) {
+            self->m_ai_panel.panel_width = width;
+            self->m_ai_panel.panel_height = height;
+            self->m_ai_panel.last_panel_x = window_rect.left;
+            self->m_ai_panel.last_panel_y = window_rect.top;
+            self->m_ai_panel.has_last_panel_position = true;
+          }
+        }
+      }
       ApplyAIPanelRoundedRegion(hwnd);
       LayoutAIPanelControls(hwnd);
       if (self) {
@@ -4994,49 +5193,7 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
       SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
       return 0;
     case WM_NCHITTEST: {
-      LRESULT hit = DefWindowProcW(hwnd, msg, wParam, lParam);
-      if (hit == HTCLIENT) {
-        RECT rc;
-        GetClientRect(hwnd, &rc);
-        // 将屏幕坐标转换为客户区坐标
-        POINT pt;
-        pt.x = LOWORD(lParam);
-        pt.y = HIWORD(lParam);
-        ScreenToClient(hwnd, &pt);
-        const int grip_size = 16;  // 调整大小热区大小
-        const int x = pt.x;
-        const int y = pt.y;
-        const int w = rc.right;
-        const int h = rc.bottom;
-
-        // 四个角
-        if (x < grip_size && y < grip_size) {
-          return HTTOPLEFT;
-        }
-        if (x >= w - grip_size && y < grip_size) {
-          return HTTOPRIGHT;
-        }
-        if (x < grip_size && y >= h - grip_size) {
-          return HTBOTTOMLEFT;
-        }
-        if (x >= w - grip_size && y >= h - grip_size) {
-          return HTBOTTOMRIGHT;
-        }
-        // 四个边
-        if (y < grip_size) {
-          return HTTOP;
-        }
-        if (y >= h - grip_size) {
-          return HTBOTTOM;
-        }
-        if (x < grip_size) {
-          return HTLEFT;
-        }
-        if (x >= w - grip_size) {
-          return HTRIGHT;
-        }
-      }
-      return hit;
+      return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
     case WM_DESTROY:
       PostQuitMessage(0);

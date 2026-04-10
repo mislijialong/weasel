@@ -134,6 +134,14 @@ struct AIPanelRuntime {
         last_panel_x(0),
         last_panel_y(0),
         has_last_panel_position(false),
+        resize_tracking(false),
+        resize_edges(0),
+        resize_start_screen_x(0),
+        resize_start_screen_y(0),
+        resize_start_window_x(0),
+        resize_start_window_y(0),
+        resize_start_width(0),
+        resize_start_height(0),
         focus_pending(false),
         webview_ready(false),
         requesting(false),
@@ -162,6 +170,14 @@ struct AIPanelRuntime {
   int last_panel_x;
   int last_panel_y;
   bool has_last_panel_position;
+  bool resize_tracking;
+  int resize_edges;
+  int resize_start_screen_x;
+  int resize_start_screen_y;
+  int resize_start_window_x;
+  int resize_start_window_y;
+  int resize_start_width;
+  int resize_start_height;
   bool focus_pending;
   bool webview_ready;
   bool requesting;
