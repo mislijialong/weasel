@@ -5060,27 +5060,35 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
       std::string token;
       std::string tenant_id;
       std::string refresh_token;
+      bool loaded_from_state_file = false;
       {
+        std::string file_token;
+        std::string file_tenant_id;
+        std::string file_refresh_token;
+        loaded_from_state_file = LoadAIAssistantLoginIdentity(
+            self->m_ai_config, &file_token, &file_tenant_id,
+            &file_refresh_token);
+        if (loaded_from_state_file) {
+          token = file_token;
+          tenant_id = file_tenant_id;
+          refresh_token = file_refresh_token;
+          std::lock_guard<std::mutex> lock(self->m_ai_login_mutex);
+          if (!file_token.empty()) {
+            self->m_ai_login_token = file_token;
+          }
+          if (!file_tenant_id.empty()) {
+            self->m_ai_login_tenant_id = file_tenant_id;
+          }
+          if (!file_refresh_token.empty()) {
+            self->m_ai_login_refresh_token = file_refresh_token;
+          }
+        }
+      }
+      if (!loaded_from_state_file) {
         std::lock_guard<std::mutex> lock(self->m_ai_login_mutex);
         token = self->m_ai_login_token;
         tenant_id = self->m_ai_login_tenant_id;
         refresh_token = self->m_ai_login_refresh_token;
-      }
-      if (tenant_id.empty() || (token.empty() && refresh_token.empty())) {
-        std::string file_token;
-        std::string file_tenant_id;
-        std::string file_refresh_token;
-        LoadAIAssistantLoginIdentity(self->m_ai_config, &file_token,
-                                     &file_tenant_id, &file_refresh_token);
-        if (!file_token.empty()) {
-          token = file_token;
-        }
-        if (!file_tenant_id.empty()) {
-          tenant_id = file_tenant_id;
-        }
-        if (!file_refresh_token.empty()) {
-          refresh_token = file_refresh_token;
-        }
       }
       panel_url =
           AppendAIPanelAuthToUrl(panel_url, token, tenant_id, refresh_token);
