@@ -348,15 +348,16 @@ program_files:
   ; Start WeaselServer
   Exec "$INSTDIR\WeaselServer.exe"
 
-  ; option CheckForUpdates
-  IfSilent DisableAutoCheckUpdate
-  MessageBox MB_YESNO|MB_ICONINFORMATION "$(AUTOCHKUPDATE)" IDYES EnableAutoCheckUpdate
-  DisableAutoCheckUpdate:
+  ; Disable auto update prompts by default after installation.
+  ; ; option CheckForUpdates
+  ; IfSilent DisableAutoCheckUpdate
+  ; MessageBox MB_YESNO|MB_ICONINFORMATION "$(AUTOCHKUPDATE)" IDYES EnableAutoCheckUpdate
+  ; DisableAutoCheckUpdate:
   WriteRegStr HKCU "Software\Rime\Weasel\Updates" "CheckForUpdates" "0"
-  GoTo end
-  EnableAutoCheckUpdate:
-  WriteRegStr HKCU "Software\Rime\Weasel\Updates" "CheckForUpdates" "1"
-  end:
+  ; GoTo end
+  ; EnableAutoCheckUpdate:
+  ; WriteRegStr HKCU "Software\Rime\Weasel\Updates" "CheckForUpdates" "1"
+  ; end:
 
   ; Prompt reboot
   StrCmp $0 "Upgrade" 0 +2
