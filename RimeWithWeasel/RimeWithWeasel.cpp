@@ -28,6 +28,7 @@
 #include <WeaselUtility.h>
 #include <winhttp.h>
 #include <shellapi.h>
+#include <ShellScalingApi.h>
 
 #include <cctype>
 #include <cstdlib>
@@ -73,6 +74,7 @@
 #endif
 
 #pragma comment(lib, "winhttp.lib")
+#pragma comment(lib, "Shcore.lib")
 
 #define TRANSPARENT_COLOR 0x00000000
 #define ARGB2ABGR(value)                                 \
@@ -116,6 +118,7 @@ constexpr int kAIPanelMaxWidth = 860;
 constexpr int kAIPanelMinHeight = 220;
 constexpr int kAIPanelMaxHeight = 560;
 constexpr int kAIPanelScreenMargin = 8;
+constexpr int kAIPanelAnchorGap = 6;
 constexpr int kAIPanelPadding = 0;
 constexpr int kAIPanelResizeHitBand = 1;
 constexpr int kAIPanelResizeHitTestBand = 4;
@@ -210,6 +213,39 @@ std::wstring ExpandEnvironmentVariables(const std::wstring& input) {
   }
   expanded.resize(written > 0 ? written - 1 : 0);
   return expanded;
+}
+
+UINT ResolveAIPanelDpi(HMONITOR monitor, HWND hwnd) {
+  UINT dpi_x = USER_DEFAULT_SCREEN_DPI;
+  UINT dpi_y = USER_DEFAULT_SCREEN_DPI;
+  if (monitor &&
+      SUCCEEDED(GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpi_x, &dpi_y)) &&
+      dpi_x > 0) {
+    return dpi_x;
+  }
+
+  const HWND dc_hwnd = hwnd && IsWindow(hwnd) ? hwnd : nullptr;
+  HDC screen_dc = GetDC(dc_hwnd);
+  if (screen_dc) {
+    const int dpi = GetDeviceCaps(screen_dc, LOGPIXELSX);
+    ReleaseDC(dc_hwnd, screen_dc);
+    if (dpi > 0) {
+      return static_cast<UINT>(dpi);
+    }
+  }
+  return USER_DEFAULT_SCREEN_DPI;
+}
+
+int ScaleAIPanelLogicalToPixels(int logical_size, UINT dpi) {
+  const UINT resolved_dpi = dpi > 0 ? dpi : USER_DEFAULT_SCREEN_DPI;
+  return max(1, MulDiv(logical_size, static_cast<int>(resolved_dpi),
+                       USER_DEFAULT_SCREEN_DPI));
+}
+
+int ScaleAIPanelPixelsToLogical(int pixel_size, UINT dpi) {
+  const UINT resolved_dpi = dpi > 0 ? dpi : USER_DEFAULT_SCREEN_DPI;
+  return max(1, MulDiv(pixel_size, USER_DEFAULT_SCREEN_DPI,
+                       static_cast<int>(resolved_dpi)));
 }
 
 void TryDisableAIPanelWindowBorder(HWND hwnd) {
@@ -4152,8 +4188,8 @@ void RimeWithWeaselHandler::_ApplyAIPanelSizeAndReposition(
   bool has_last_position = false;
   int last_panel_x = 0;
   int last_panel_y = 0;
-  int width = kAIPanelWidth;
-  int height = kAIPanelHeight;
+  int logical_width = kAIPanelWidth;
+  int logical_height = kAIPanelHeight;
   {
     std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
     panel_hwnd = m_ai_panel.panel_hwnd;
@@ -4161,19 +4197,21 @@ void RimeWithWeaselHandler::_ApplyAIPanelSizeAndReposition(
       return;
     }
     target_hwnd = m_ai_panel.target_hwnd;
-    width = m_ai_panel.panel_width > 0 ? m_ai_panel.panel_width : kAIPanelWidth;
-    height =
+    logical_width =
+        m_ai_panel.panel_width > 0 ? m_ai_panel.panel_width : kAIPanelWidth;
+    logical_height =
         m_ai_panel.panel_height > 0 ? m_ai_panel.panel_height : kAIPanelHeight;
     if (requested_width > 0) {
-      width = requested_width;
+      logical_width = requested_width;
     }
     if (requested_height > 0) {
-      height = requested_height;
+      logical_height = requested_height;
     }
-    width = max(kAIPanelMinWidth, min(kAIPanelMaxWidth, width));
-    height = max(kAIPanelMinHeight, min(kAIPanelMaxHeight, height));
-    m_ai_panel.panel_width = width;
-    m_ai_panel.panel_height = height;
+    logical_width = max(kAIPanelMinWidth, min(kAIPanelMaxWidth, logical_width));
+    logical_height =
+        max(kAIPanelMinHeight, min(kAIPanelMaxHeight, logical_height));
+    m_ai_panel.panel_width = logical_width;
+    m_ai_panel.panel_height = logical_height;
     if (m_has_last_input_rect) {
       anchor_rect = m_last_input_rect;
       has_anchor = true;
@@ -4209,24 +4247,28 @@ void RimeWithWeaselHandler::_ApplyAIPanelSizeAndReposition(
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work_rect, 0);
   }
 
-  const int min_x = work_rect.left + kAIPanelScreenMargin;
-  const int max_x = max(min_x, work_rect.right - kAIPanelScreenMargin - width);
-  const int min_y = work_rect.top + kAIPanelScreenMargin;
-  const int max_y =
-      max(min_y, work_rect.bottom - kAIPanelScreenMargin - height);
+  const UINT dpi = ResolveAIPanelDpi(monitor, panel_hwnd);
+  const int width = ScaleAIPanelLogicalToPixels(logical_width, dpi);
+  const int height = ScaleAIPanelLogicalToPixels(logical_height, dpi);
+  const int screen_margin = ScaleAIPanelLogicalToPixels(kAIPanelScreenMargin, dpi);
+  const int anchor_gap = ScaleAIPanelLogicalToPixels(kAIPanelAnchorGap, dpi);
+  const int min_x = work_rect.left + screen_margin;
+  const int max_x = max(min_x, work_rect.right - screen_margin - width);
+  const int min_y = work_rect.top + screen_margin;
+  const int max_y = max(min_y, work_rect.bottom - screen_margin - height);
   int x = min_x;
   int y = min_y;
   if (prefer_anchor_position && has_anchor) {
     x = anchor_rect.left;
-    y = anchor_rect.bottom + 6;
+    y = anchor_rect.bottom + anchor_gap;
   } else if (has_last_position) {
     x = last_panel_x;
     y = last_panel_y;
   } else if (has_anchor) {
     x = anchor_rect.left;
-    y = anchor_rect.bottom + 6;
-    if (y + height > work_rect.bottom - kAIPanelScreenMargin) {
-      const int above = anchor_rect.top - height - 6;
+    y = anchor_rect.bottom + anchor_gap;
+    if (y + height > work_rect.bottom - screen_margin) {
+      const int above = anchor_rect.top - height - anchor_gap;
       if (above >= min_y) {
         y = above;
       }
@@ -5035,10 +5077,16 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
       if (!minmax_info) {
         return 0;
       }
-      minmax_info->ptMinTrackSize.x = kAIPanelMinWidth;
-      minmax_info->ptMinTrackSize.y = kAIPanelMinHeight;
-      minmax_info->ptMaxTrackSize.x = kAIPanelMaxWidth;
-      minmax_info->ptMaxTrackSize.y = kAIPanelMaxHeight;
+      const UINT dpi = ResolveAIPanelDpi(
+          MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), hwnd);
+      minmax_info->ptMinTrackSize.x =
+          ScaleAIPanelLogicalToPixels(kAIPanelMinWidth, dpi);
+      minmax_info->ptMinTrackSize.y =
+          ScaleAIPanelLogicalToPixels(kAIPanelMinHeight, dpi);
+      minmax_info->ptMaxTrackSize.x =
+          ScaleAIPanelLogicalToPixels(kAIPanelMaxWidth, dpi);
+      minmax_info->ptMaxTrackSize.y =
+          ScaleAIPanelLogicalToPixels(kAIPanelMaxHeight, dpi);
       return 0;
     }
     case WM_LBUTTONDOWN:
@@ -5103,8 +5151,18 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
             if (resize_edges & kAIPanelResizeEdgeBottom) {
               height = start_height + (cursor_point.y - start_screen_y);
             }
-            width = max(kAIPanelMinWidth, min(kAIPanelMaxWidth, width));
-            height = max(kAIPanelMinHeight, min(kAIPanelMaxHeight, height));
+            const UINT dpi = ResolveAIPanelDpi(
+                MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), hwnd);
+            const int min_width =
+                ScaleAIPanelLogicalToPixels(kAIPanelMinWidth, dpi);
+            const int max_width =
+                ScaleAIPanelLogicalToPixels(kAIPanelMaxWidth, dpi);
+            const int min_height =
+                ScaleAIPanelLogicalToPixels(kAIPanelMinHeight, dpi);
+            const int max_height =
+                ScaleAIPanelLogicalToPixels(kAIPanelMaxHeight, dpi);
+            width = max(min_width, min(max_width, width));
+            height = max(min_height, min(max_height, height));
             SetWindowPos(hwnd, HWND_TOPMOST, start_window_x, start_window_y,
                          width, height, SWP_NOACTIVATE);
             return 0;
@@ -5131,12 +5189,18 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
       if (self) {
         RECT window_rect = {0, 0, 0, 0};
         if (GetWindowRect(hwnd, &window_rect)) {
+          const UINT dpi = ResolveAIPanelDpi(
+              MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), hwnd);
           const int width = max(
               kAIPanelMinWidth,
-              min(kAIPanelMaxWidth, window_rect.right - window_rect.left));
+              min(kAIPanelMaxWidth,
+                  ScaleAIPanelPixelsToLogical(
+                      window_rect.right - window_rect.left, dpi)));
           const int height = max(
               kAIPanelMinHeight,
-              min(kAIPanelMaxHeight, window_rect.bottom - window_rect.top));
+              min(kAIPanelMaxHeight,
+                  ScaleAIPanelPixelsToLogical(
+                      window_rect.bottom - window_rect.top, dpi)));
           std::lock_guard<std::mutex> lock(self->m_ai_panel_mutex);
           if (self->m_ai_panel.panel_hwnd == hwnd) {
             self->m_ai_panel.panel_width = width;
@@ -5153,6 +5217,17 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
         self->_ResizeAIPanelWebView();
       }
       return 0;
+    case WM_DPICHANGED: {
+      const RECT* suggested_rect = reinterpret_cast<const RECT*>(lParam);
+      if (!suggested_rect) {
+        return 0;
+      }
+      SetWindowPos(hwnd, HWND_TOPMOST, suggested_rect->left, suggested_rect->top,
+                   suggested_rect->right - suggested_rect->left,
+                   suggested_rect->bottom - suggested_rect->top,
+                   SWP_NOACTIVATE);
+      return 0;
+    }
     case WM_COMMAND:
       if (!self) {
         break;
