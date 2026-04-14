@@ -47,6 +47,43 @@ std::vector<fs::path> BuildOutputDirCandidates(
   return candidates;
 }
 
+bool can_open_protocol(const wchar_t* protocol) {
+  if (!protocol || !*protocol) {
+    return false;
+  }
+
+  std::wstring scheme(protocol);
+  const size_t colon_pos = scheme.find(L':');
+  if (colon_pos == std::wstring::npos || colon_pos == 0) {
+    return false;
+  }
+  scheme.resize(colon_pos);
+
+  HKEY protocol_key = nullptr;
+  if (RegOpenKeyExW(HKEY_CLASSES_ROOT, scheme.c_str(), 0, KEY_READ,
+                    &protocol_key) != ERROR_SUCCESS) {
+    return false;
+  }
+
+  DWORD value_type = 0;
+  DWORD value_size = 0;
+  const bool has_url_protocol =
+      RegQueryValueExW(protocol_key, L"URL Protocol", nullptr, &value_type,
+                       nullptr, &value_size) == ERROR_SUCCESS;
+  RegCloseKey(protocol_key);
+
+  std::wstring command_key_path = scheme + L"\\shell\\open\\command";
+  HKEY command_key = nullptr;
+  const bool has_open_command =
+      RegOpenKeyExW(HKEY_CLASSES_ROOT, command_key_path.c_str(), 0, KEY_READ,
+                    &command_key) == ERROR_SUCCESS;
+  if (has_open_command) {
+    RegCloseKey(command_key);
+  }
+
+  return has_url_protocol || has_open_command;
+}
+
 fs::path BuildDocumentPath(const fs::path& dir,
                            const wchar_t* extension,
                            int suffix) {
@@ -241,7 +278,13 @@ bool WeaselServerApp::ExecuteSystemCommand(
     return open(L"https://youtube.com");
   }
   if (command_id == "rili" || command_id == "calendar" || command_id == "cal") {
-    return open(L"outlookcal:");
+    if (can_open_protocol(L"outlookcal:")) {
+      return open(L"outlookcal:");
+    }
+    if (can_open_protocol(L"outlook:")) {
+      return open(L"outlook:");
+    }
+    return open(L"https://outlook.office.com/calendar/");
   }
   if (command_id == "txt" || command_id == "md") {
     const wchar_t* extension = command_id == "md" ? L"md" : L"txt";
