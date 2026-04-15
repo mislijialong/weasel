@@ -100,14 +100,20 @@ struct AIAssistantConfig {
 };
 
 struct AIPanelInstitutionOption {
-  AIPanelInstitutionOption() : id(), name(), app_key() {}
+  AIPanelInstitutionOption() : id(), name(), app_key(), template_content() {}
   AIPanelInstitutionOption(const std::wstring& option_id,
                            const std::wstring& option_name,
-                           const std::wstring& option_app_key)
-      : id(option_id), name(option_name), app_key(option_app_key) {}
+                           const std::wstring& option_app_key,
+                           const std::wstring& option_template_content =
+                               std::wstring())
+      : id(option_id),
+        name(option_name),
+        app_key(option_app_key),
+        template_content(option_template_content) {}
   std::wstring id;
   std::wstring name;
   std::wstring app_key;
+  std::wstring template_content;
 };
 
 struct AIPanelRuntime {
@@ -254,10 +260,18 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   bool _TryProcessAIAssistantTrigger(weasel::KeyEvent keyEvent,
                                      WeaselSessionId ipc_id,
                                      EatLine eat);
+  bool _PrepareAIPanelInstitutionOptionsForOpen(
+      std::vector<AIPanelInstitutionOption>* options,
+      bool* options_ready,
+      bool* relogin_started,
+      std::string* error_message);
   bool _EnsureAIPanelWindow();
   bool _OpenAIPanel(WeaselSessionId ipc_id,
                     HWND target_hwnd,
-                    uint64_t request_id);
+                    uint64_t request_id,
+                    const std::vector<AIPanelInstitutionOption>* initial_options =
+                        nullptr,
+                    bool institutions_ready = false);
   void _CloseAIPanel();
   void _DestroyAIPanel();
   void _SetAIPanelStatus(const std::wstring& status_text);

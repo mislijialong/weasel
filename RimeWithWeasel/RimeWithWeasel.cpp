@@ -1705,13 +1705,21 @@ bool SaveAIAssistantLoginState(const AIAssistantConfig& config,
   return output.good();
 }
 
+bool ParseHttpUrlOrigin(const std::wstring& url,
+                        std::wstring* scheme,
+                        std::wstring* host,
+                        INTERNET_PORT* port);
+std::wstring BuildHttpOrigin(const std::wstring& scheme,
+                             const std::wstring& host,
+                             INTERNET_PORT port);
+
 std::string BuildAIAssistantInstitutionListRequestBody(
     const AIAssistantConfig& config) {
   (void)config;
   std::string body;
   body.reserve(128);
   body += "{\"queryContent\":\"\",\"insShowType\":\"";
-  body += "2";
+  body += "1";
   body += "\"}";
   return body;
 }
@@ -1787,19 +1795,20 @@ bool ParseAIAssistantInstitutionList(
         *it, {"insId", "id", "insCode", "code", "tenantId", "orgId"});
     std::string name = ReadFirstStringLikeJsonMember(
         *it, {"insName", "name", "tenantName", "title", "label"});
-    std::string app_key =
-        ReadFirstStringLikeJsonMember(*it, {"appKey", "app_key", "appkey"});
+    std::string app_key = ReadFirstStringLikeJsonMember(
+        *it, {"appKey", "app_key", "appkey", "agentAppKey"});
+    std::string template_content = ReadFirstStringLikeJsonMember(
+        *it, {"tmplContent", "content", "template", "templateContent",
+              "prompt", "promptContent", "instruction",
+              "instructionContent"});
     if (name.empty()) {
-      continue;
-    }
-    if (app_key.empty()) {
       continue;
     }
     if (id.empty()) {
       id = name;
     }
-    options->push_back(
-        AIPanelInstitutionOption(u8tow(id), u8tow(name), u8tow(app_key)));
+    options->push_back(AIPanelInstitutionOption(
+        u8tow(id), u8tow(name), u8tow(app_key), u8tow(template_content)));
   }
 
   if (options->empty()) {
@@ -1818,9 +1827,6 @@ bool FetchAIAssistantInstitutionOptions(
     std::vector<AIPanelInstitutionOption>* options,
     std::string* error_message,
     int* http_status_code = nullptr) {
-  (void)config;
-  (void)token;
-  (void)tenant_id;
   if (!options) {
     if (error_message) {
       *error_message = "Institution options output is null.";
@@ -1831,9 +1837,292 @@ bool FetchAIAssistantInstitutionOptions(
   if (http_status_code) {
     *http_status_code = 0;
   }
+
+  const auto is_auth_failure_code = [](int code) -> bool {
+    switch (code) {
+      case 401:
+      case 11001:
+      case 11011:
+      case 11012:
+      case 11013:
+      case 11014:
+      case 11015:
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  const auto read_response_metadata = [](const std::string& response_body,
+                                         int* code,
+                                         std::string* message) {
+    if (code) {
+      *code = 200;
+    }
+    if (message) {
+      message->clear();
+    }
+
+    rapidjson::Document document;
+    document.Parse(response_body.c_str(), response_body.size());
+    if (document.HasParseError() || !document.IsObject()) {
+      return;
+    }
+
+    const auto code_it = document.FindMember("code");
+    if (code_it != document.MemberEnd()) {
+      int parsed_code = 200;
+      if (code_it->value.IsInt()) {
+        parsed_code = code_it->value.GetInt();
+      } else if (code_it->value.IsUint()) {
+        parsed_code = static_cast<int>(code_it->value.GetUint());
+      } else if (code_it->value.IsInt64()) {
+        parsed_code = static_cast<int>(code_it->value.GetInt64());
+      } else if (code_it->value.IsUint64()) {
+        parsed_code = static_cast<int>(code_it->value.GetUint64());
+      } else if (code_it->value.IsString()) {
+        parsed_code = std::atoi(code_it->value.GetString());
+      }
+      if (code) {
+        *code = parsed_code;
+      }
+    }
+
+    if (!message) {
+      return;
+    }
+
+    const char* message_keys[] = {"msg", "message", "errorMsg", "error"};
+    for (const char* key : message_keys) {
+      const auto message_it = document.FindMember(key);
+      if (message_it != document.MemberEnd() && message_it->value.IsString()) {
+        *message = message_it->value.GetString();
+        return;
+      }
+    }
+  };
+
+  std::vector<std::wstring> endpoint_candidates;
+  const auto add_unique_endpoint =
+      [&endpoint_candidates](const std::wstring& endpoint) {
+        if (endpoint.empty()) {
+          return;
+        }
+        for (const auto& existing : endpoint_candidates) {
+          if (_wcsicmp(existing.c_str(), endpoint.c_str()) == 0) {
+            return;
+          }
+        }
+        endpoint_candidates.push_back(endpoint);
+      };
+  const auto add_candidates_from_url =
+      [&add_unique_endpoint](const std::wstring& url) {
+        std::wstring scheme;
+        std::wstring host;
+        INTERNET_PORT port = 0;
+        if (!ParseHttpUrlOrigin(url, &scheme, &host, &port)) {
+          return;
+        }
+        const std::wstring origin = BuildHttpOrigin(scheme, host, port);
+        if (origin.empty()) {
+          return;
+        }
+        add_unique_endpoint(
+            origin + L"/langwell-api/langwell-ins-server/client/acct/ins/list");
+        if (port == 85) {
+          const std::wstring alt_origin = BuildHttpOrigin(
+              scheme, host, static_cast<INTERNET_PORT>(84));
+          add_unique_endpoint(
+              alt_origin +
+              L"/langwell-api/langwell-ins-server/client/acct/ins/list");
+        }
+      };
+
+  add_candidates_from_url(u8tow(config.panel_url));
+  add_candidates_from_url(u8tow(config.login_url));
+  add_candidates_from_url(u8tow(config.refresh_token_endpoint));
+
+  if (endpoint_candidates.empty()) {
+    if (error_message) {
+      *error_message = "No institution list endpoint could be resolved.";
+    }
+    return false;
+  }
+
+  const std::string request_body =
+      BuildAIAssistantInstitutionListRequestBody(config);
+  std::string last_error = "Institution list request failed.";
+  int last_status_code = 0;
+
+  for (const auto& endpoint : endpoint_candidates) {
+    URL_COMPONENTS parts = {0};
+    parts.dwStructSize = sizeof(parts);
+    parts.dwSchemeLength = static_cast<DWORD>(-1);
+    parts.dwHostNameLength = static_cast<DWORD>(-1);
+    parts.dwUrlPathLength = static_cast<DWORD>(-1);
+    parts.dwExtraInfoLength = static_cast<DWORD>(-1);
+    if (!WinHttpCrackUrl(endpoint.c_str(), 0, 0, &parts)) {
+      last_error = "Unable to parse institution list endpoint URL.";
+      continue;
+    }
+
+    const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
+    std::wstring object_name =
+        parts.dwUrlPathLength > 0
+            ? std::wstring(parts.lpszUrlPath, parts.dwUrlPathLength)
+            : std::wstring(L"/");
+    if (parts.dwExtraInfoLength > 0) {
+      object_name.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
+    }
+
+    ScopedWinHttpHandle session(
+        WinHttpOpen(L"WeaselAIAssistantInstitution/1.0",
+                    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+    if (!session.valid()) {
+      last_error = "WinHTTP session creation failed for institution list.";
+      continue;
+    }
+    WinHttpSetTimeouts(session.get(), config.timeout_ms, config.timeout_ms,
+                       config.timeout_ms, config.timeout_ms);
+
+    ScopedWinHttpHandle connection(
+        WinHttpConnect(session.get(), host.c_str(), parts.nPort, 0));
+    if (!connection.valid()) {
+      last_error = "WinHTTP connection failed for institution endpoint.";
+      continue;
+    }
+
+    const DWORD request_flags =
+        parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0;
+    ScopedWinHttpHandle request(
+        WinHttpOpenRequest(connection.get(), L"POST", object_name.c_str(),
+                           nullptr, WINHTTP_NO_REFERER,
+                           WINHTTP_DEFAULT_ACCEPT_TYPES, request_flags));
+    if (!request.valid()) {
+      last_error = "WinHTTP request creation failed for institution list.";
+      continue;
+    }
+
+    std::wstring headers =
+        L"Accept: application/json\r\nContent-Type: application/json\r\n";
+    if (!tenant_id.empty()) {
+      headers += L"TenantId: ";
+      headers += u8tow(tenant_id);
+      headers += L"\r\nTenantid: ";
+      headers += u8tow(tenant_id);
+      headers += L"\r\n";
+    }
+    if (!token.empty()) {
+      headers += L"Token: ";
+      headers += u8tow(token);
+      headers += L"\r\nOVERTOKEN: ";
+      headers += u8tow(token);
+      headers += L"\r\n";
+    }
+    WinHttpAddRequestHeaders(
+        request.get(), headers.c_str(), static_cast<DWORD>(-1),
+        WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+
+    if (!WinHttpSendRequest(
+            request.get(), WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+            request_body.empty() ? WINHTTP_NO_REQUEST_DATA
+                                 : const_cast<char*>(request_body.data()),
+            static_cast<DWORD>(request_body.size()),
+            static_cast<DWORD>(request_body.size()), 0) ||
+        !WinHttpReceiveResponse(request.get(), nullptr)) {
+      last_error = "Sending institution list request failed.";
+      continue;
+    }
+
+    DWORD status_code = 0;
+    DWORD status_code_size = sizeof(status_code);
+    WinHttpQueryHeaders(request.get(),
+                        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                        WINHTTP_HEADER_NAME_BY_INDEX, &status_code,
+                        &status_code_size, WINHTTP_NO_HEADER_INDEX);
+    last_status_code = static_cast<int>(status_code);
+
+    std::string response_body;
+    bool read_ok = true;
+    for (;;) {
+      DWORD available = 0;
+      if (!WinHttpQueryDataAvailable(request.get(), &available)) {
+        last_error = "Failed to read institution list response.";
+        read_ok = false;
+        break;
+      }
+      if (available == 0) {
+        break;
+      }
+      std::string chunk(available, '\0');
+      DWORD downloaded = 0;
+      if (!WinHttpReadData(request.get(), chunk.data(), available,
+                           &downloaded)) {
+        last_error = "Failed while downloading institution list response.";
+        read_ok = false;
+        break;
+      }
+      chunk.resize(downloaded);
+      response_body += chunk;
+    }
+    if (!read_ok) {
+      continue;
+    }
+
+    int response_code = 200;
+    std::string response_message;
+    read_response_metadata(response_body, &response_code, &response_message);
+
+    if (status_code < 200 || status_code >= 300) {
+      last_error = !response_message.empty()
+                       ? response_message
+                       : "Institution list request returned HTTP " +
+                             std::to_string(status_code) + ".";
+      if (http_status_code) {
+        *http_status_code = static_cast<int>(status_code);
+      }
+      if (static_cast<int>(status_code) == 401) {
+        break;
+      }
+      continue;
+    }
+
+    if (response_code != 0 && response_code != 200) {
+      last_error = !response_message.empty()
+                       ? response_message
+                       : "Institution list response code " +
+                             std::to_string(response_code) + ".";
+      if (is_auth_failure_code(response_code)) {
+        last_status_code = 401;
+        if (http_status_code) {
+          *http_status_code = 401;
+        }
+        break;
+      }
+      continue;
+    }
+
+    std::vector<AIPanelInstitutionOption> parsed_options;
+    std::string parse_error;
+    if (!ParseAIAssistantInstitutionList(response_body, &parsed_options,
+                                         &parse_error)) {
+      last_error = parse_error;
+      continue;
+    }
+
+    *options = std::move(parsed_options);
+    if (http_status_code) {
+      *http_status_code = static_cast<int>(status_code);
+    }
+    return true;
+  }
+
+  if (http_status_code && *http_status_code == 0) {
+    *http_status_code = last_status_code;
+  }
   if (error_message) {
-    *error_message =
-        "Institution list fetch is disabled; panel loads agent list itself.";
+    *error_message = last_error;
   }
   return false;
 }
@@ -2273,6 +2562,8 @@ std::string BuildAIPanelHostSyncMessage(
     json += EscapeJsonString(wtou8(option.name));
     json += "\",\"appKey\":\"";
     json += EscapeJsonString(wtou8(option.app_key));
+    json += "\",\"template\":\"";
+    json += EscapeJsonString(wtou8(option.template_content));
     json += "\"}";
   }
   json += "]}}";
@@ -3863,6 +4154,15 @@ void RimeWithWeaselHandler::_RunAIAssistantLoginListener(
       m_ai_login_tenant_id = tenant_id;
       m_ai_login_refresh_token = refresh_token;
     }
+    HWND panel_hwnd = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
+      panel_hwnd = m_ai_panel.panel_hwnd;
+    }
+    if (panel_hwnd && IsWindow(panel_hwnd)) {
+      PostMessageW(panel_hwnd, WM_AI_WEBVIEW_SYNC, 0, 0);
+      _RefreshAIPanelInstitutionOptions();
+    }
     LOG(INFO) << "AI login success via mqtt, client_id=" << client_id;
     break;
   }
@@ -3934,7 +4234,25 @@ bool RimeWithWeaselHandler::_TryProcessAIAssistantTrigger(KeyEvent keyEvent,
   AppendAIAssistantContextDump(m_ai_config, context_source, target_hwnd,
                                prompt_context);
 
-  if (_OpenAIPanel(ipc_id, target_hwnd, 0)) {
+  std::vector<AIPanelInstitutionOption> preloaded_institution_options;
+  bool institution_options_ready = false;
+  bool relogin_started = false;
+  std::string institution_error_message;
+  if (!_PrepareAIPanelInstitutionOptionsForOpen(
+          &preloaded_institution_options, &institution_options_ready,
+          &relogin_started, &institution_error_message)) {
+    if (relogin_started) {
+      LOG(INFO) << "AI panel open blocked because institution list returned "
+                   "401 and relogin was started.";
+    } else if (!institution_error_message.empty()) {
+      LOG(WARNING) << "AI panel open blocked: "
+                   << institution_error_message;
+    }
+    return true;
+  }
+
+  if (_OpenAIPanel(ipc_id, target_hwnd, 0, &preloaded_institution_options,
+                   institution_options_ready)) {
     const std::wstring normalized_prompt_context =
         NormalizeReferencedContextText(prompt_context);
     {
@@ -3952,6 +4270,133 @@ bool RimeWithWeaselHandler::_TryProcessAIAssistantTrigger(KeyEvent keyEvent,
 
   LOG(WARNING)
       << "AI panel window unavailable; skip sync fallback to avoid blocking.";
+  return true;
+}
+
+bool RimeWithWeaselHandler::_PrepareAIPanelInstitutionOptionsForOpen(
+    std::vector<AIPanelInstitutionOption>* options,
+    bool* options_ready,
+    bool* relogin_started,
+    std::string* error_message) {
+  if (!options || !options_ready || !relogin_started) {
+    if (error_message) {
+      *error_message = "Institution prefetch output is null.";
+    }
+    return false;
+  }
+
+  options->clear();
+  *options_ready = false;
+  *relogin_started = false;
+  if (error_message) {
+    error_message->clear();
+  }
+
+  const AIAssistantConfig config = m_ai_config;
+  std::string token;
+  std::string tenant_id;
+  std::string refresh_token;
+  {
+    std::lock_guard<std::mutex> lock(m_ai_login_mutex);
+    token = m_ai_login_token;
+    tenant_id = m_ai_login_tenant_id;
+    refresh_token = m_ai_login_refresh_token;
+  }
+  if (tenant_id.empty() || (token.empty() && refresh_token.empty())) {
+    std::string file_token;
+    std::string file_tenant_id;
+    std::string file_refresh_token;
+    LoadAIAssistantLoginIdentity(config, &file_token, &file_tenant_id,
+                                 &file_refresh_token);
+    if (!file_token.empty()) {
+      token = file_token;
+    }
+    if (!file_tenant_id.empty()) {
+      tenant_id = file_tenant_id;
+    }
+    if (!file_refresh_token.empty()) {
+      refresh_token = file_refresh_token;
+    }
+    if (!file_token.empty() || !file_tenant_id.empty() ||
+        !file_refresh_token.empty()) {
+      std::lock_guard<std::mutex> lock(m_ai_login_mutex);
+      if (!file_token.empty()) {
+        m_ai_login_token = file_token;
+      }
+      if (!file_tenant_id.empty()) {
+        m_ai_login_tenant_id = file_tenant_id;
+      }
+      if (!file_refresh_token.empty()) {
+        m_ai_login_refresh_token = file_refresh_token;
+      }
+    }
+  }
+
+  if (tenant_id.empty()) {
+    *options_ready = true;
+    return true;
+  }
+
+  if (token.empty() && !refresh_token.empty()) {
+    std::string refreshed_token;
+    std::string refreshed_refresh_token;
+    std::string refresh_endpoint;
+    std::string refresh_error;
+    const bool refreshed = RefreshAIAssistantAccessToken(
+        config, refresh_token, tenant_id, &refreshed_token,
+        &refreshed_refresh_token, &refresh_endpoint, &refresh_error);
+    if (refreshed && !refreshed_token.empty()) {
+      token = refreshed_token;
+      if (!refreshed_refresh_token.empty()) {
+        refresh_token = refreshed_refresh_token;
+      }
+      std::string client_id_for_state;
+      {
+        std::lock_guard<std::mutex> lock(m_ai_login_mutex);
+        client_id_for_state = m_ai_login_client_id;
+      }
+      if (SaveAIAssistantLoginState(config, token, tenant_id, refresh_token,
+                                    client_id_for_state, std::string(),
+                                    std::string())) {
+        std::lock_guard<std::mutex> lock(m_ai_login_mutex);
+        m_ai_login_token = token;
+        m_ai_login_tenant_id = tenant_id;
+        m_ai_login_refresh_token = refresh_token;
+      }
+      LOG(INFO) << "AI panel prefetch refreshed token via endpoint "
+                << refresh_endpoint;
+    } else if (error_message) {
+      *error_message = refresh_error;
+    }
+  }
+
+  if (token.empty()) {
+    *options_ready = true;
+    return true;
+  }
+
+  int http_status_code = 0;
+  std::string fetch_error_message;
+  if (FetchAIAssistantInstitutionOptions(config, token, tenant_id, options,
+                                         &fetch_error_message,
+                                         &http_status_code)) {
+    *options_ready = true;
+    return true;
+  }
+
+  if (http_status_code == 401) {
+    *relogin_started = _ForceAIAssistantRelogin();
+    if (error_message) {
+      *error_message = *relogin_started
+                           ? "Institution list returned 401; relogin started."
+                           : "Institution list returned 401; relogin failed.";
+    }
+    return false;
+  }
+
+  if (error_message && !fetch_error_message.empty()) {
+    *error_message = fetch_error_message;
+  }
   return true;
 }
 
@@ -4303,7 +4748,9 @@ void RimeWithWeaselHandler::_ApplyAIPanelSizeAndReposition(
 
 bool RimeWithWeaselHandler::_OpenAIPanel(WeaselSessionId ipc_id,
                                          HWND target_hwnd,
-                                         uint64_t request_id) {
+                                         uint64_t request_id,
+                                         const std::vector<AIPanelInstitutionOption>* initial_options,
+                                         bool institutions_ready) {
   if (!_EnsureAIPanelWindow()) {
     return false;
   }
@@ -4328,9 +4775,14 @@ bool RimeWithWeaselHandler::_OpenAIPanel(WeaselSessionId ipc_id,
     }
     m_ai_panel.output_text.clear();
     m_ai_panel.selected_institution_id.clear();
+    if (initial_options) {
+      m_ai_panel.institution_options = *initial_options;
+    } else if (institutions_ready) {
+      m_ai_panel.institution_options.clear();
+    }
     m_ai_panel.status_text = L"上下文已就绪，请在前端面板中发起请求。";
     m_ai_panel.requesting = false;
-    m_ai_panel.institutions_loading = true;
+    m_ai_panel.institutions_loading = !institutions_ready;
     m_ai_panel.completed = false;
     m_ai_panel.has_error = false;
     m_ai_panel.focus_pending = true;
@@ -4357,7 +4809,9 @@ bool RimeWithWeaselHandler::_OpenAIPanel(WeaselSessionId ipc_id,
   PostMessageW(panel_hwnd, WM_AI_WEBVIEW_FOCUS, 0, 0);
   PostMessageW(panel_hwnd, WM_AI_WEBVIEW_INIT, 0, 0);
   PostMessageW(panel_hwnd, WM_AI_WEBVIEW_SYNC, 0, 0);
-  _RefreshAIPanelInstitutionOptions();
+  if (!institutions_ready) {
+    _RefreshAIPanelInstitutionOptions();
+  }
   return true;
 }
 
@@ -4799,13 +5253,18 @@ void RimeWithWeaselHandler::_RefreshAIPanelInstitutionOptions() {
     std::string error_message;
     int http_status_code = 0;
     bool ok = false;
+    bool relogin_started = false;
 
     if (!token.empty()) {
       ok = FetchAIAssistantInstitutionOptions(config, token, tenant_id, &options,
                                               &error_message, &http_status_code);
     }
-    if (!ok && !refresh_token.empty() &&
-        (token.empty() || http_status_code == 401)) {
+    if (!ok && http_status_code == 401) {
+      relogin_started = _ForceAIAssistantRelogin();
+      error_message =
+          relogin_started ? "登录已过期，已触发重新登录。"
+                          : "登录已过期，但重新登录流程启动失败。";
+    } else if (!ok && token.empty() && !refresh_token.empty()) {
       std::string refreshed_token;
       std::string refreshed_refresh_token;
       std::string refresh_endpoint;
@@ -4868,8 +5327,13 @@ void RimeWithWeaselHandler::_RefreshAIPanelInstitutionOptions() {
     }
 
     if (!ok) {
-      LOG(WARNING) << "AI panel institution list fetch failed: "
-                   << error_message;
+      if (relogin_started) {
+        LOG(INFO) << "AI panel institution list fetch hit 401 and triggered "
+                     "relogin.";
+      } else {
+        LOG(WARNING) << "AI panel institution list fetch failed: "
+                     << error_message;
+      }
     } else {
       LOG(INFO) << "AI panel institution list loaded, count="
                 << options.size();
