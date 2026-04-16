@@ -111,8 +111,8 @@ using CreateCoreWebView2EnvironmentWithOptionsFunc = HRESULT(STDAPICALLTYPE*)(
 #endif
 
 constexpr wchar_t kAIPanelWindowClass[] = L"WeaselAIAssistantPanelWindow";
-constexpr int kAIPanelWidth = 540;
-constexpr int kAIPanelHeight = 360;
+constexpr int kAIPanelWidth = 440;
+constexpr int kAIPanelHeight = 300;
 constexpr int kAIPanelMinWidth = 180;
 constexpr int kAIPanelMaxWidth = 860;
 constexpr int kAIPanelMinHeight = 220;
@@ -1719,7 +1719,7 @@ std::string BuildAIAssistantInstitutionListRequestBody(
   std::string body;
   body.reserve(128);
   body += "{\"queryContent\":\"\",\"insShowType\":\"";
-  body += "1";
+  body += "3";
   body += "\"}";
   return body;
 }
@@ -5710,6 +5710,23 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
           LOWORD(wParam) == kAIPanelControlCancel) {
         self->_CancelAIPanelOutput();
         return 0;
+      }
+      break;
+    case WM_ACTIVATE:
+      if (self && LOWORD(wParam) == WA_INACTIVE) {
+        HWND next_hwnd = reinterpret_cast<HWND>(lParam);
+        if (next_hwnd != hwnd && !IsChild(hwnd, next_hwnd)) {
+          bool should_close = false;
+          {
+            std::lock_guard<std::mutex> lock(self->m_ai_panel_mutex);
+            should_close = self->m_ai_panel.panel_hwnd == hwnd &&
+                           IsWindowVisible(hwnd) &&
+                           !self->m_ai_panel.resize_tracking;
+          }
+          if (should_close) {
+            self->_CloseAIPanel();
+          }
+        }
       }
       break;
     case WM_KEYDOWN:
