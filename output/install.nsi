@@ -346,7 +346,7 @@ program_files:
   ; Write autorun key
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "WeaselServer" "$INSTDIR\WeaselServer.exe"
   ; Start WeaselServer
-  Exec "$INSTDIR\WeaselServer.exe"
+  Exec '"$INSTDIR\WeaselServer.exe" /login'
 
   ; Disable auto update prompts by default after installation.
   ; ; option CheckForUpdates

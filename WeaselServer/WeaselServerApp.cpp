@@ -139,7 +139,7 @@ WeaselServerApp::~WeaselServerApp() {
   StopLauncherWorker();
 }
 
-int WeaselServerApp::Run() {
+int WeaselServerApp::Run(bool run_install_login_check) {
   if (!m_server.Start())
     return -1;
 
@@ -158,6 +158,9 @@ int WeaselServerApp::Run() {
 
   m_handler->Initialize();
   m_handler->OnUpdateUI([this]() { tray_icon.Refresh(); });
+  if (run_install_login_check) {
+    m_handler->RunInstallLoginCheck();
+  }
 
   tray_icon.Create(m_server.GetHWnd());
   tray_icon.Refresh();

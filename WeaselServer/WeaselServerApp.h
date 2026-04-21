@@ -63,7 +63,7 @@ class WeaselServerApp {
  public:
   WeaselServerApp();
   ~WeaselServerApp();
-  int Run();
+  int Run(bool run_install_login_check = false);
 
  protected:
   void SetupMenuHandlers();

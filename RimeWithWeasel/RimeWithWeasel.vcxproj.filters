@@ -15,6 +15,9 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="AIAssistantInstructions.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="AIAssistantHotkey.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -32,6 +35,9 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\include\AIAssistantInstructions.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\include\AIAssistantHotkey.h">
       <Filter>Header Files</Filter>
     </ClInclude>

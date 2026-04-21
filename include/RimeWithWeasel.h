@@ -1,4 +1,5 @@
 #pragma once
+#include <AIAssistantInstructions.h>
 #include <AIAssistantHotkey.h>
 #include <InputContentStore.h>
 #include <WeaselIPC.h>
@@ -99,23 +100,6 @@ struct AIAssistantConfig {
   int timeout_ms;
 };
 
-struct AIPanelInstitutionOption {
-  AIPanelInstitutionOption() : id(), name(), app_key(), template_content() {}
-  AIPanelInstitutionOption(const std::wstring& option_id,
-                           const std::wstring& option_name,
-                           const std::wstring& option_app_key,
-                           const std::wstring& option_template_content =
-                               std::wstring())
-      : id(option_id),
-        name(option_name),
-        app_key(option_app_key),
-        template_content(option_template_content) {}
-  std::wstring id;
-  std::wstring name;
-  std::wstring app_key;
-  std::wstring template_content;
-};
-
 struct AIPanelRuntime {
   AIPanelRuntime()
       : panel_hwnd(nullptr),
@@ -197,6 +181,15 @@ struct SystemCommandLaunchRequest {
   std::filesystem::path preferred_output_dir;
 };
 
+struct AIAssistantInjectedCandidateState {
+  void Clear() {
+    options.clear();
+    rime_highlighted = 0;
+  }
+  std::vector<AIPanelInstitutionOption> options;
+  int rime_highlighted = 0;
+};
+
 class RimeWithWeaselHandler : public weasel::RequestHandler {
  public:
   RimeWithWeaselHandler(weasel::UI* ui);
@@ -230,6 +223,7 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   void OnUpdateUI(std::function<void()> const& cb);
   void OnSystemCommand(
       std::function<void(const SystemCommandLaunchRequest&)> const& cb);
+  void RunInstallLoginCheck();
 
  private:
   void _Setup();
@@ -244,11 +238,15 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
                 EatLine eat,
                 const std::wstring* extra_commit = nullptr);
   void _ReadClientInfo(WeaselSessionId ipc_id, LPWSTR buffer);
-  void _GetCandidateInfo(weasel::CandidateInfo& cinfo, RimeContext& ctx);
+  void _GetCandidateInfo(weasel::CandidateInfo& cinfo,
+                         RimeContext& ctx,
+                         WeaselSessionId ipc_id = 0);
   void _GetStatus(weasel::Status& stat,
                   WeaselSessionId ipc_id,
                   weasel::Context& ctx);
-  void _GetContext(weasel::Context& ctx, RimeSessionId session_id);
+  void _GetContext(weasel::Context& ctx,
+                   RimeSessionId session_id,
+                   WeaselSessionId ipc_id = 0);
   void _UpdateShowNotifications(RimeConfig* config, bool initialize = false);
   void _LoadAIAssistantConfig(RimeConfig* config);
   bool _EnsureAIAssistantLogin();
@@ -257,6 +255,22 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   bool _IsAIAssistantLoggedIn();
   void _StopAIAssistantLoginFlow();
   void _RunAIAssistantLoginListener(const std::string& client_id);
+  void _RefreshAIAssistantInstructionCacheAsync();
+  bool _RefreshAIAssistantInstructionCacheSync(std::string* error_message,
+                                               int* http_status_code);
+  void _ClearAIAssistantInstructionCache();
+  bool _TryInjectAIAssistantCandidates(WeaselSessionId ipc_id,
+                                       RimeContext& ctx,
+                                       weasel::CandidateInfo* cinfo);
+  bool _TrySelectInjectedAIAssistantCandidate(size_t index,
+                                             WeaselSessionId ipc_id);
+  bool _TryHandleInjectedCandidateSelectKey(weasel::KeyEvent keyEvent,
+                                            WeaselSessionId ipc_id,
+                                            EatLine eat);
+  bool _OpenAIPanelForInstruction(WeaselSessionId ipc_id,
+                                  const AIPanelInstitutionOption& option);
+  bool _ExecuteInjectedSystemCommand(WeaselSessionId ipc_id,
+                                     const AIPanelInstitutionOption& option);
   bool _TryProcessAIAssistantTrigger(weasel::KeyEvent keyEvent,
                                      WeaselSessionId ipc_id,
                                      EatLine eat);
@@ -271,7 +285,9 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
                     uint64_t request_id,
                     const std::vector<AIPanelInstitutionOption>* initial_options =
                         nullptr,
-                    bool institutions_ready = false);
+                    bool institutions_ready = false,
+                    const std::wstring& initial_selected_institution_id =
+                        std::wstring());
   void _CloseAIPanel();
   void _DestroyAIPanel();
   void _SetAIPanelStatus(const std::wstring& status_text);
@@ -303,6 +319,10 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   std::wstring _TakePendingCommitText(RimeSessionId session_id);
   bool _TryHandleSystemCommandCommit(std::wstring* commit_text,
                                      WeaselSessionId ipc_id);
+  bool _ResolveAIAssistantLoginState(std::string* token,
+                                     std::string* tenant_id,
+                                     std::string* refresh_token,
+                                     std::string* error_message);
   std::filesystem::path _ReadSystemCommandOutputDir(WeaselSessionId ipc_id) const;
   std::string _GetInputContentContextKey(WeaselSessionId ipc_id);
   std::string _GetContextCacheKey(WeaselSessionId ipc_id) const;
@@ -359,6 +379,10 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   std::string m_ai_login_client_id;
   AIPanelRuntime m_ai_panel;
   std::mutex m_ai_panel_mutex;
+  AIAssistantInstructions m_ai_instructions;
+  std::mutex m_ai_injected_candidates_mutex;
+  std::map<WeaselSessionId, AIAssistantInjectedCandidateState>
+      m_ai_injected_candidates;
   RECT m_last_input_rect;
   bool m_has_last_input_rect;
   std::atomic<uint64_t> m_ai_request_seq;

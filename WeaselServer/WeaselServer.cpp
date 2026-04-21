@@ -84,6 +84,8 @@ int WINAPI _tWinMain(HINSTANCE hInstance,
     return 0;
   }
 
+  const bool run_install_login_check = !wcscmp(L"/login", lpstrCmdLine);
+
   // command line option /q stops the running server
   bool quit = !wcscmp(L"/q", lpstrCmdLine) || !wcscmp(L"/quit", lpstrCmdLine);
   // restart if already running
@@ -117,7 +119,7 @@ int WINAPI _tWinMain(HINSTANCE hInstance,
   try {
     WeaselServerApp app;
     RegisterApplicationRestart(NULL, 0);
-    nRet = app.Run();
+    nRet = app.Run(run_install_login_check);
   } catch (...) {
     // bad luck...
     nRet = -1;
