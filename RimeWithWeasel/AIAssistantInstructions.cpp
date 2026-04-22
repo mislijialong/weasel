@@ -25,12 +25,6 @@ std::wstring NormalizeInstructionName(const std::wstring& text) {
 
 const std::vector<AIPanelInstitutionOption>& BuiltinAIAssistantInstructions() {
   static const std::vector<AIPanelInstitutionOption> kOptions = {
-      AIPanelInstitutionOption(L"mock-continue", L"续写", std::wstring(),
-                               std::wstring()),
-      AIPanelInstitutionOption(L"mock-outline", L"文章大纲", std::wstring(),
-                               std::wstring()),
-      AIPanelInstitutionOption(L"mock-speech", L"讲话稿", std::wstring(),
-                               std::wstring()),
       AIPanelInstitutionOption(
           L"mock-system-notepad", L"打开记事本", std::wstring(),
           std::wstring(),
