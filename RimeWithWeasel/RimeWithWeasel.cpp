@@ -3684,6 +3684,7 @@ void RimeWithWeaselHandler::SelectCandidateOnCurrentPage(
         !it->second.options.empty() &&
         index >= it->second.options.size()) {
       rime_index = index - it->second.options.size();
+      m_ai_injected_candidates.erase(it);
     }
   }
   rime_api->select_candidate_on_current_page(to_session_id(ipc_id), rime_index);
@@ -4062,6 +4063,10 @@ bool RimeWithWeaselHandler::_TryHandleInjectedCandidateSelectKey(
   }
 
   const size_t rime_index = selected_index - injected_count;
+  {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    m_ai_injected_candidates.erase(ipc_id);
+  }
   if (rime_api->select_candidate_on_current_page(to_session_id(ipc_id),
                                                  rime_index)) {
     _Respond(ipc_id, eat);
