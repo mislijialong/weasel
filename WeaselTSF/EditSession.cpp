@@ -3,6 +3,12 @@
 #include "CandidateList.h"
 #include "ResponseParser.h"
 
+namespace {
+void InlineAiTsfDebug(const std::wstring& message) {
+  OutputDebugStringW((L"inline_ai_tsf: " + message + L"\n").c_str());
+}
+}  // namespace
+
 STDAPI WeaselTSF::DoEditSession(TfEditCookie ec) {
   // get commit string from server
   std::wstring commit;
@@ -12,6 +18,14 @@ STDAPI WeaselTSF::DoEditSession(TfEditCookie ec) {
                                 &_cand->style());
 
   bool ok = m_client.GetResponseData(std::ref(parser));
+  InlineAiTsfDebug(L"edit_session ok=" + std::to_wstring(ok) +
+                   L" composing=" + std::to_wstring(_status.composing) +
+                   L" inline_preedit=" +
+                   std::to_wstring(config.inline_preedit) +
+                   L" inline_ai_requesting=" +
+                   std::to_wstring(config.inline_ai_requesting) +
+                   L" preedit=" + context->preedit.str +
+                   L" commit=" + commit);
 
   _UpdateLanguageBar(_status);
 
@@ -42,6 +56,11 @@ STDAPI WeaselTSF::DoEditSession(TfEditCookie ec) {
   }
 
   _UpdateUI(*context, _status);
+  if (config.inline_ai_requesting) {
+    _ScheduleInlineAiSync();
+  } else {
+    _CancelInlineAiSync();
+  }
 
   return TRUE;
 }

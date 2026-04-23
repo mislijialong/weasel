@@ -14,12 +14,14 @@ struct AIPanelInstitutionOption {
   AIPanelInstitutionOption()
       : id(),
         name(),
+        lookup_text(),
         app_key(),
         template_content(),
         action(AIAssistantInstructionAction::kOpenPanel),
         system_command_id() {}
   AIPanelInstitutionOption(const std::wstring& option_id,
                            const std::wstring& option_name,
+                           const std::wstring& option_lookup_text,
                            const std::wstring& option_app_key,
                            const std::wstring& option_template_content =
                                std::wstring(),
@@ -29,6 +31,7 @@ struct AIPanelInstitutionOption {
                                std::wstring())
       : id(option_id),
         name(option_name),
+        lookup_text(option_lookup_text),
         app_key(option_app_key),
         template_content(option_template_content),
         action(option_action),
@@ -41,6 +44,7 @@ struct AIPanelInstitutionOption {
 
   std::wstring id;
   std::wstring name;
+  std::wstring lookup_text;
   std::wstring app_key;
   std::wstring template_content;
   AIAssistantInstructionAction action;
@@ -50,6 +54,7 @@ struct AIPanelInstitutionOption {
 bool MatchBuiltinAIAssistantInstruction(const std::wstring& text,
                                         AIPanelInstitutionOption* option);
 bool IsBuiltinAIAssistantInstructionId(const std::wstring& id);
+std::vector<AIPanelInstitutionOption> SnapshotBuiltinAIAssistantInstructions();
 
 class AIAssistantInstructions {
  public:

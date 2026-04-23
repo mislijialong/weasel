@@ -4,6 +4,12 @@
 #include "ResponseParser.h"
 #include "CandidateList.h"
 
+namespace {
+void InlineAiTsfDebug(const std::wstring& message) {
+  OutputDebugStringW((L"inline_ai_tsf: " + message + L"\n").c_str());
+}
+}  // namespace
+
 /* Start Composition */
 class CStartCompositionEditSession : public CEditSession {
  public:
@@ -388,6 +394,7 @@ void WeaselTSF::_UpdateComposition(com_ptr<ITfContext> pContext) {
 
   _pEditSessionContext->RequestEditSession(
       _tfClientId, this, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE, &hr);
+  InlineAiTsfDebug(L"request_edit_session hr=" + std::to_wstring(hr));
   _async_edit = !!(hr == TF_S_ASYNC);
   _UpdateCompositionWindow(pContext);
 }

@@ -187,9 +187,13 @@ struct Status {
 
 // 用於向前端告知設置信息
 struct Config {
-  Config() : inline_preedit(false) {}
-  void reset() { inline_preedit = false; }
+  Config() : inline_preedit(false), inline_ai_requesting(false) {}
+  void reset() {
+    inline_preedit = false;
+    inline_ai_requesting = false;
+  }
   bool inline_preedit;
+  bool inline_ai_requesting;
 };
 
 struct UIStyle {

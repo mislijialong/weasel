@@ -52,8 +52,10 @@ struct AIAssistantConfig {
         stream(true),
         login_required(false),
         debug_dump_context(false),
+        inline_instruction_enabled(true),
         trigger_hotkey("Control+3"),
         trigger_binding('3', ibus::CONTROL_MASK),
+        inline_instruction_prefix("/"),
         endpoint(),
         api_key(),
         model("gpt-5"),
@@ -77,8 +79,10 @@ struct AIAssistantConfig {
   bool stream;
   bool login_required;
   bool debug_dump_context;
+  bool inline_instruction_enabled;
   std::string trigger_hotkey;
   AiHotkeyBinding trigger_binding;
+  std::string inline_instruction_prefix;
   std::string endpoint;
   std::string api_key;
   std::string model;
@@ -185,9 +189,61 @@ struct AIAssistantInjectedCandidateState {
   void Clear() {
     options.clear();
     rime_highlighted = 0;
+    instruction_lookup_mode = false;
+    lookup_query.clear();
+    current_page = 0;
+    page_size = 0;
   }
   std::vector<AIPanelInstitutionOption> options;
   int rime_highlighted = 0;
+  bool instruction_lookup_mode = false;
+  std::string lookup_query;
+  size_t current_page = 0;
+  size_t page_size = 0;
+};
+
+enum class InlineInstructionPhase {
+  kIdle = 0,
+  kEditing,
+  kRequesting,
+};
+
+struct InlineInstructionState {
+  InlineInstructionPhase phase = InlineInstructionPhase::kIdle;
+  bool session_alive = true;
+  bool detached_writeback = false;
+  bool has_error = false;
+  bool slash_mode = false;
+  bool has_selected_option = false;
+  HWND target_hwnd = nullptr;
+  uint64_t request_id = 0;
+  std::wstring prompt_text;
+  size_t cursor_offset = 0;
+  std::wstring committed_prompt_text;
+  std::wstring pending_commit_text;
+  std::wstring result_text;
+  std::wstring error_text;
+  AIPanelInstitutionOption selected_option;
+
+  void Reset() {
+    phase = InlineInstructionPhase::kIdle;
+    session_alive = true;
+    detached_writeback = false;
+    has_error = false;
+    slash_mode = false;
+    has_selected_option = false;
+    target_hwnd = nullptr;
+    request_id = 0;
+    prompt_text.clear();
+    cursor_offset = 0;
+    committed_prompt_text.clear();
+    pending_commit_text.clear();
+    result_text.clear();
+    error_text.clear();
+    selected_option = AIPanelInstitutionOption();
+  }
+
+  bool IsActive() const { return phase != InlineInstructionPhase::kIdle; }
 };
 
 class RimeWithWeaselHandler : public weasel::RequestHandler {
@@ -210,6 +266,7 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
                                                WeaselSessionId ipc_id,
                                                EatLine eat);
   virtual bool ChangePage(bool backward, WeaselSessionId ipc_id, EatLine eat);
+  virtual BOOL SyncSession(WeaselSessionId ipc_id, EatLine eat);
   virtual void FocusIn(DWORD param, WeaselSessionId ipc_id);
   virtual void FocusOut(DWORD param, WeaselSessionId ipc_id);
   virtual void UpdateInputPosition(RECT const& rc, WeaselSessionId ipc_id);
@@ -262,11 +319,28 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   bool _TryInjectAIAssistantCandidates(WeaselSessionId ipc_id,
                                        RimeContext& ctx,
                                        weasel::CandidateInfo* cinfo);
+  bool _TryBuildInstructionLookupCandidates(WeaselSessionId ipc_id,
+                                            const std::string& input_text,
+                                            int page_size,
+                                            weasel::CandidateInfo* cinfo);
+  bool _TryMatchAIAssistantInstructionOption(
+      const std::wstring& text,
+      AIPanelInstitutionOption* option) const;
+  bool _TryResolveInstructionLookupCandidate(
+      size_t candidate_index,
+      bool use_highlighted,
+      WeaselSessionId ipc_id,
+      AIPanelInstitutionOption* option);
+  bool _TryHandleInstructionLookupCandidateSelectKey(weasel::KeyEvent keyEvent,
+                                                     WeaselSessionId ipc_id,
+                                                     EatLine eat);
   bool _TrySelectInjectedAIAssistantCandidate(size_t index,
                                              WeaselSessionId ipc_id);
   bool _TryHandleInjectedCandidateSelectKey(weasel::KeyEvent keyEvent,
                                             WeaselSessionId ipc_id,
                                             EatLine eat);
+  bool _EnterInlineInstructionForOption(WeaselSessionId ipc_id,
+                                        const AIPanelInstitutionOption& option);
   bool _OpenAIPanelForInstruction(WeaselSessionId ipc_id,
                                   const AIPanelInstitutionOption& option);
   bool _ExecuteInjectedSystemCommand(WeaselSessionId ipc_id,
@@ -274,6 +348,9 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   bool _TryProcessAIAssistantTrigger(weasel::KeyEvent keyEvent,
                                      WeaselSessionId ipc_id,
                                      EatLine eat);
+  bool _TryHandleInlineInstructionKey(weasel::KeyEvent keyEvent,
+                                      WeaselSessionId ipc_id,
+                                      EatLine eat);
   bool _PrepareAIPanelInstitutionOptionsForOpen(
       std::vector<AIPanelInstitutionOption>* options,
       bool* options_ready,
@@ -308,6 +385,9 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
                                       bool prefer_anchor_position = false);
   void _StartAIAssistantStreamRequest(uint64_t request_id,
                                       const std::wstring& context_text);
+  void _StartInlineInstructionRequest(WeaselSessionId ipc_id,
+                                      uint64_t request_id,
+                                      const std::wstring& prompt_text);
   bool _SendTextToTargetWindow(HWND target_hwnd, const std::wstring& text);
   static LRESULT CALLBACK AIAssistantPanelWndProc(HWND hwnd,
                                                   UINT msg,
@@ -383,6 +463,8 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   std::mutex m_ai_injected_candidates_mutex;
   std::map<WeaselSessionId, AIAssistantInjectedCandidateState>
       m_ai_injected_candidates;
+  std::mutex m_inline_instruction_mutex;
+  std::map<WeaselSessionId, InlineInstructionState> m_inline_instruction_states;
   RECT m_last_input_rect;
   bool m_has_last_input_rect;
   std::atomic<uint64_t> m_ai_request_seq;

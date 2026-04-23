@@ -103,6 +103,13 @@ bool ClientImpl::ChangePage(bool backward) {
   return ret != 0;
 }
 
+bool ClientImpl::SyncSession() {
+  if (!_Active())
+    return false;
+  LRESULT ret = _SendMessage(WEASEL_IPC_SYNC_SESSION, 0, session_id);
+  return ret != 0;
+}
+
 void ClientImpl::UpdateInputPosition(RECT const& rc) {
   if (!_Active())
     return;
@@ -242,6 +249,10 @@ bool Client::HighlightCandidateOnCurrentPage(size_t index) {
 
 bool Client::ChangePage(bool backward) {
   return m_pImpl->ChangePage(backward);
+}
+
+bool Client::SyncSession() {
+  return m_pImpl->SyncSession();
 }
 
 void Client::UpdateInputPosition(RECT const& rc) {

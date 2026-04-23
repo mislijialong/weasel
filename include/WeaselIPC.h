@@ -32,6 +32,7 @@ enum WEASEL_IPC_COMMAND {
   WEASEL_IPC_SELECT_CANDIDATE_ON_CURRENT_PAGE,
   WEASEL_IPC_HIGHLIGHT_CANDIDATE_ON_CURRENT_PAGE,
   WEASEL_IPC_CHANGE_PAGE,
+  WEASEL_IPC_SYNC_SESSION,
   WEASEL_IPC_LAST_COMMAND
 };
 
@@ -74,6 +75,7 @@ struct RequestHandler {
   virtual bool ChangePage(bool backward, DWORD session_id, EatLine eat) {
     return false;
   }
+  virtual BOOL SyncSession(DWORD session_id, EatLine eat) { return FALSE; }
   virtual void FocusIn(DWORD param, DWORD session_id) {}
   virtual void FocusOut(DWORD param, DWORD session_id) {}
   virtual void UpdateInputPosition(RECT const& rc, DWORD session_id) {}
@@ -132,6 +134,8 @@ class Client {
   bool HighlightCandidateOnCurrentPage(size_t index);
   // 翻页，backward = true 向前翻，false向后翻
   bool ChangePage(bool backward);
+  // 请求服务端同步当前 session 的异步状态
+  bool SyncSession();
   // 更新输入位置
   void UpdateInputPosition(RECT const& rc);
   // 输入窗口获得焦点

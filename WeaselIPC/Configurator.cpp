@@ -19,5 +19,9 @@ void Configurator::Store(Deserializer::KeyType const& key,
   bool bool_value = (!value.empty() && value != L"0");
   if (key[1] == L"inline_preedit") {
     m_pTarget->p_config->inline_preedit = bool_value;
+    return;
+  }
+  if (key[1] == L"inline_ai_requesting") {
+    m_pTarget->p_config->inline_ai_requesting = bool_value;
   }
 }

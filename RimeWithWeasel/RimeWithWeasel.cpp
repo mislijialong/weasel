@@ -31,7 +31,9 @@
 #include <shellapi.h>
 #include <ShellScalingApi.h>
 
+#include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <cstdlib>
 #include <cwctype>
 #include <array>
@@ -39,9 +41,12 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <random>
 #include <regex>
+#include <set>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 #include <rime_api.h>
 
@@ -149,6 +154,7 @@ constexpr char kDefaultAIAssistantPrompt[] =
     "explanation, no markdown, and no quotation marks.";
 constexpr wchar_t kSystemCommandCommitPrefix[] = L"__weasel_syscmd__:";
 constexpr char kDefaultSystemCommandInputPrefix[] = "sc";
+constexpr char kInstructionLookupInputPrefix[] = "sS";
 constexpr const char* kAllowedSystemCommandIds[] = {
     "jsq",       "calc",     "notepad",   "mspaint", "explorer",
     "txt",       "md",       "gh",        "bd",      "wb",
@@ -210,6 +216,453 @@ bool IsSystemCommandInputText(const std::string& input_text) {
   return IsAllowedSystemCommandId(command_id);
 }
 
+bool IsInstructionLookupInputText(const std::string& input_text) {
+  constexpr size_t kPrefixLength = sizeof(kInstructionLookupInputPrefix) - 1;
+  if (input_text.size() <= kPrefixLength ||
+      input_text.compare(0, kPrefixLength, kInstructionLookupInputPrefix) !=
+          0) {
+    return false;
+  }
+  for (size_t i = kPrefixLength; i < input_text.size(); ++i) {
+    const unsigned char ch = static_cast<unsigned char>(input_text[i]);
+    if (ch < 'a' || ch > 'z') {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::string ExtractInstructionLookupQuery(const std::string& input_text) {
+  if (!IsInstructionLookupInputText(input_text)) {
+    return std::string();
+  }
+  return input_text.substr(sizeof(kInstructionLookupInputPrefix) - 1);
+}
+
+std::string NormalizeInstructionLookupAscii(const std::string& text) {
+  std::string normalized;
+  normalized.reserve(text.size());
+  for (char ch : text) {
+    const unsigned char uch = static_cast<unsigned char>(ch);
+    if (uch >= 'A' && uch <= 'Z') {
+      normalized.push_back(static_cast<char>(uch - 'A' + 'a'));
+    } else if ((uch >= 'a' && uch <= 'z') || (uch >= '0' && uch <= '9')) {
+      normalized.push_back(static_cast<char>(uch));
+    }
+  }
+  return normalized;
+}
+
+std::string NormalizeInstructionLookupAscii(const std::wstring& text) {
+  std::string normalized;
+  normalized.reserve(text.size());
+  for (wchar_t ch : text) {
+    if (ch >= L'A' && ch <= L'Z') {
+      normalized.push_back(static_cast<char>(ch - L'A' + 'a'));
+    } else if ((ch >= L'a' && ch <= L'z') || (ch >= L'0' && ch <= L'9')) {
+      normalized.push_back(static_cast<char>(ch));
+    }
+  }
+  return normalized;
+}
+
+std::string ReadRimeDataDirectory(bool shared) {
+  if (!rime_api) {
+    return std::string();
+  }
+
+  std::array<char, 4096> buffer = {};
+  const auto copy_data_dir = [&buffer](const char* data_dir) {
+    if (!data_dir) {
+      return;
+    }
+    const size_t length = (std::min)(std::strlen(data_dir), buffer.size() - 1);
+    std::memcpy(buffer.data(), data_dir, length);
+    buffer[length] = '\0';
+  };
+  if (shared) {
+    if (rime_api->get_shared_data_dir_s) {
+      rime_api->get_shared_data_dir_s(buffer.data(), buffer.size());
+    } else if (rime_api->get_shared_data_dir) {
+      copy_data_dir(rime_api->get_shared_data_dir());
+    }
+  } else {
+    if (rime_api->get_user_data_dir_s) {
+      rime_api->get_user_data_dir_s(buffer.data(), buffer.size());
+    } else if (rime_api->get_user_data_dir) {
+      copy_data_dir(rime_api->get_user_data_dir());
+    }
+  }
+  return std::string(buffer.data());
+}
+
+void AddInstructionLookupAlias(const std::string& alias,
+                               std::vector<std::string>* aliases,
+                               std::set<std::string>* seen) {
+  if (!aliases || !seen) {
+    return;
+  }
+  const std::string normalized = NormalizeInstructionLookupAscii(alias);
+  if (normalized.empty() || seen->find(normalized) != seen->end()) {
+    return;
+  }
+  seen->insert(normalized);
+  aliases->push_back(normalized);
+}
+
+std::vector<std::string> TokenizeInstructionLookupCodes(const std::string& text) {
+  std::vector<std::string> tokens;
+  std::string token;
+  token.reserve(text.size());
+  for (char ch : text) {
+    const unsigned char uch = static_cast<unsigned char>(ch);
+    if ((uch >= 'A' && uch <= 'Z') || (uch >= 'a' && uch <= 'z') ||
+        (uch >= '0' && uch <= '9')) {
+      token.push_back(static_cast<char>(std::tolower(uch)));
+      continue;
+    }
+    if (!token.empty()) {
+      tokens.push_back(token);
+      token.clear();
+    }
+  }
+  if (!token.empty()) {
+    tokens.push_back(token);
+  }
+  return tokens;
+}
+
+void AddInstructionLookupAliasesFromCodeText(
+    const std::string& text,
+    std::vector<std::string>* aliases,
+    std::set<std::string>* seen) {
+  AddInstructionLookupAlias(text, aliases, seen);
+  for (const auto& token : TokenizeInstructionLookupCodes(text)) {
+    AddInstructionLookupAlias(token, aliases, seen);
+  }
+}
+
+void AddInstructionLookupAliasesFromCodeText(
+    const std::wstring& text,
+    std::vector<std::string>* aliases,
+    std::set<std::string>* seen) {
+  AddInstructionLookupAliasesFromCodeText(wtou8(text), aliases, seen);
+}
+
+std::string BuildInstructionLookupFullAliasFromCode(const std::string& code) {
+  return NormalizeInstructionLookupAscii(code);
+}
+
+std::string BuildInstructionLookupInitialAliasFromCode(const std::string& code) {
+  std::string initials;
+  for (const auto& token : TokenizeInstructionLookupCodes(code)) {
+    if (!token.empty()) {
+      initials.push_back(token.front());
+    }
+  }
+  return NormalizeInstructionLookupAscii(initials);
+}
+
+char GetInstructionLookupPinyinInitialFallback(wchar_t ch) {
+  if ((ch >= L'A' && ch <= L'Z') || (ch >= L'a' && ch <= L'z') ||
+      (ch >= L'0' && ch <= L'9')) {
+    return static_cast<char>(std::towlower(ch));
+  }
+
+  char gbk[4] = {};
+  const int converted = WideCharToMultiByte(936, 0, &ch, 1, gbk,
+                                            static_cast<int>(sizeof(gbk)),
+                                            nullptr, nullptr);
+  if (converted < 2) {
+    return '\0';
+  }
+
+  const int code = (static_cast<unsigned char>(gbk[0]) << 8) |
+                   static_cast<unsigned char>(gbk[1]);
+  struct GbkInitialRange {
+    int lower_bound;
+    int upper_bound;
+    char initial;
+  };
+  static const GbkInitialRange kRanges[] = {
+      {45217, 45252, 'a'}, {45253, 45760, 'b'}, {45761, 46317, 'c'},
+      {46318, 46825, 'd'}, {46826, 47009, 'e'}, {47010, 47296, 'f'},
+      {47297, 47613, 'g'}, {47614, 48118, 'h'}, {48119, 49061, 'j'},
+      {49062, 49323, 'k'}, {49324, 49895, 'l'}, {49896, 50370, 'm'},
+      {50371, 50613, 'n'}, {50614, 50621, 'o'}, {50622, 50905, 'p'},
+      {50906, 51386, 'q'}, {51387, 51445, 'r'}, {51446, 52217, 's'},
+      {52218, 52697, 't'}, {52698, 52979, 'w'}, {52980, 53688, 'x'},
+      {53689, 54480, 'y'}, {54481, 55289, 'z'}};
+  for (const auto& range : kRanges) {
+    if (code >= range.lower_bound && code <= range.upper_bound) {
+      return range.initial;
+    }
+  }
+  return '\0';
+}
+
+class InstructionLookupPinyinCache {
+ public:
+  bool TryGetPhraseCode(const std::wstring& phrase, std::string* code) {
+    if (!code || phrase.empty()) {
+      return false;
+    }
+    EnsureLoaded();
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = phrase_codes_.find(phrase);
+    if (it == phrase_codes_.end()) {
+      return false;
+    }
+    *code = it->second;
+    return true;
+  }
+
+  bool TryGetCharCode(wchar_t ch, std::string* code) {
+    if (!code || ch == 0) {
+      return false;
+    }
+    EnsureLoaded();
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = char_codes_.find(ch);
+    if (it == char_codes_.end()) {
+      return false;
+    }
+    *code = it->second;
+    return true;
+  }
+
+  size_t max_phrase_length() {
+    EnsureLoaded();
+    std::lock_guard<std::mutex> lock(mutex_);
+    return max_phrase_length_;
+  }
+
+ private:
+  void EnsureLoaded() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (load_attempted_) {
+      return;
+    }
+    load_attempted_ = true;
+
+    std::vector<fs::path> candidate_paths;
+    const std::string shared_dir = ReadRimeDataDirectory(true);
+    if (!shared_dir.empty()) {
+      candidate_paths.push_back(
+          fs::u8path(shared_dir) / "luna_pinyin.dict.yaml");
+    }
+    const std::string user_dir = ReadRimeDataDirectory(false);
+    if (!user_dir.empty()) {
+      candidate_paths.push_back(fs::u8path(user_dir) / "luna_pinyin.dict.yaml");
+    }
+    candidate_paths.push_back(
+        fs::current_path() / "output" / "data" / "luna_pinyin.dict.yaml");
+
+    for (const auto& path : candidate_paths) {
+      if (LoadFromPath(path)) {
+        break;
+      }
+    }
+  }
+
+  bool LoadFromPath(const fs::path& path) {
+    std::error_code ec;
+    if (!fs::exists(path, ec) || ec) {
+      return false;
+    }
+
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) {
+      return false;
+    }
+
+    bool in_entries = false;
+    std::string line;
+    while (std::getline(stream, line)) {
+      if (!line.empty() && line.back() == '\r') {
+        line.pop_back();
+      }
+      if (!in_entries) {
+        if (line == "...") {
+          in_entries = true;
+        }
+        continue;
+      }
+      if (line.empty() || line[0] == '#') {
+        continue;
+      }
+
+      const size_t first_tab = line.find('\t');
+      if (first_tab == std::string::npos || first_tab == 0) {
+        continue;
+      }
+      const size_t second_tab = line.find('\t', first_tab + 1);
+      const std::string phrase_u8 = line.substr(0, first_tab);
+      const std::string code = line.substr(
+          first_tab + 1,
+          second_tab == std::string::npos ? std::string::npos
+                                          : second_tab - first_tab - 1);
+      if (code.empty()) {
+        continue;
+      }
+
+      const std::wstring phrase = u8tow(phrase_u8);
+      if (phrase.empty()) {
+        continue;
+      }
+      phrase_codes_.emplace(phrase, code);
+      max_phrase_length_ = max(max_phrase_length_, phrase.size());
+      if (phrase.size() == 1) {
+        char_codes_.emplace(phrase.front(), code);
+      }
+    }
+
+    return !phrase_codes_.empty() || !char_codes_.empty();
+  }
+
+  std::mutex mutex_;
+  bool load_attempted_ = false;
+  size_t max_phrase_length_ = 1;
+  std::unordered_map<std::wstring, std::string> phrase_codes_;
+  std::unordered_map<wchar_t, std::string> char_codes_;
+};
+
+InstructionLookupPinyinCache& GetInstructionLookupPinyinCache() {
+  static InstructionLookupPinyinCache cache;
+  return cache;
+}
+
+bool TryBuildInstructionLookupPinyinAliases(const std::wstring& text,
+                                            std::string* full_alias,
+                                            std::string* initial_alias) {
+  if (!full_alias || !initial_alias) {
+    return false;
+  }
+
+  full_alias->clear();
+  initial_alias->clear();
+  if (text.empty()) {
+    return false;
+  }
+
+  InstructionLookupPinyinCache& cache = GetInstructionLookupPinyinCache();
+  std::string exact_code;
+  if (cache.TryGetPhraseCode(text, &exact_code)) {
+    *full_alias = BuildInstructionLookupFullAliasFromCode(exact_code);
+    *initial_alias = BuildInstructionLookupInitialAliasFromCode(exact_code);
+    return !full_alias->empty() || !initial_alias->empty();
+  }
+
+  const size_t max_phrase_length = cache.max_phrase_length();
+  for (size_t index = 0; index < text.size();) {
+    const wchar_t ch = text[index];
+    if (ch == 0 || std::iswspace(static_cast<wint_t>(ch))) {
+      ++index;
+      continue;
+    }
+    if ((ch >= L'A' && ch <= L'Z') || (ch >= L'a' && ch <= L'z') ||
+        (ch >= L'0' && ch <= L'9')) {
+      const char lower_ch =
+          static_cast<char>((ch >= L'A' && ch <= L'Z') ? (ch - L'A' + 'a') : ch);
+      full_alias->push_back(lower_ch);
+      initial_alias->push_back(lower_ch);
+      ++index;
+      continue;
+    }
+
+    bool matched_phrase = false;
+    for (size_t len = (std::min)(max_phrase_length, text.size() - index);
+         len > 1; --len) {
+      std::string phrase_code;
+      if (!cache.TryGetPhraseCode(text.substr(index, len), &phrase_code)) {
+        continue;
+      }
+      full_alias->append(BuildInstructionLookupFullAliasFromCode(phrase_code));
+      initial_alias->append(
+          BuildInstructionLookupInitialAliasFromCode(phrase_code));
+      index += len;
+      matched_phrase = true;
+      break;
+    }
+    if (matched_phrase) {
+      continue;
+    }
+
+    std::string char_code;
+    if (cache.TryGetCharCode(ch, &char_code)) {
+      full_alias->append(BuildInstructionLookupFullAliasFromCode(char_code));
+      initial_alias->append(
+          BuildInstructionLookupInitialAliasFromCode(char_code));
+      ++index;
+      continue;
+    }
+
+    const char fallback_initial = GetInstructionLookupPinyinInitialFallback(ch);
+    if (fallback_initial != '\0') {
+      full_alias->push_back(fallback_initial);
+      initial_alias->push_back(fallback_initial);
+    }
+    ++index;
+  }
+
+  *full_alias = NormalizeInstructionLookupAscii(*full_alias);
+  *initial_alias = NormalizeInstructionLookupAscii(*initial_alias);
+  return !full_alias->empty() || !initial_alias->empty();
+}
+
+int ScoreInstructionLookupAlias(const std::string& query,
+                                const std::string& alias) {
+  if (query.empty() || alias.empty()) {
+    return 0;
+  }
+  if (alias == query) {
+    return 10000 - static_cast<int>(alias.size());
+  }
+  if (alias.size() >= query.size() &&
+      alias.compare(0, query.size(), query) == 0) {
+    return 8000 - static_cast<int>(alias.size() - query.size());
+  }
+  const size_t pos = alias.find(query);
+  if (pos != std::string::npos) {
+    return 4000 - static_cast<int>(pos);
+  }
+  return 0;
+}
+
+struct InstructionLookupRankedOption {
+  AIPanelInstitutionOption option;
+  int score = 0;
+  size_t order = 0;
+};
+
+size_t GetInjectedCandidateVisibleOffset(
+    const AIAssistantInjectedCandidateState& state) {
+  if (!state.instruction_lookup_mode || state.page_size == 0) {
+    return 0;
+  }
+  return state.current_page * state.page_size;
+}
+
+size_t GetInjectedCandidateVisibleCount(
+    const AIAssistantInjectedCandidateState& state) {
+  const size_t visible_offset = GetInjectedCandidateVisibleOffset(state);
+  if (visible_offset >= state.options.size()) {
+    return 0;
+  }
+  const size_t page_size =
+      state.instruction_lookup_mode && state.page_size > 0
+          ? state.page_size
+          : state.options.size();
+  const size_t remaining = state.options.size() - visible_offset;
+  return (std::min)(page_size, remaining);
+}
+
+size_t ResolveInjectedCandidateIndex(
+    const AIAssistantInjectedCandidateState& state,
+    size_t visible_index) {
+  return GetInjectedCandidateVisibleOffset(state) + visible_index;
+}
+
 bool IsSystemCommandConfirmKey(const KeyEvent& key_event) {
   if (key_event.mask & ibus::RELEASE_MASK) {
     return false;
@@ -217,6 +670,254 @@ bool IsSystemCommandConfirmKey(const KeyEvent& key_event) {
   return key_event.keycode == ibus::space ||
          key_event.keycode == ibus::Return ||
          key_event.keycode == ibus::KP_Enter;
+}
+
+bool IsInlineInstructionSubmitKey(const KeyEvent& key_event) {
+  if (key_event.mask & ibus::RELEASE_MASK) {
+    return false;
+  }
+  return key_event.keycode == ibus::Return ||
+         key_event.keycode == ibus::KP_Enter;
+}
+
+bool IsInlineInstructionCancelKey(const KeyEvent& key_event) {
+  return !(key_event.mask & ibus::RELEASE_MASK) &&
+         key_event.keycode == ibus::Keycode::Escape;
+}
+
+bool IsInlineInstructionBackspaceKey(const KeyEvent& key_event) {
+  return !(key_event.mask & ibus::RELEASE_MASK) &&
+         key_event.keycode == ibus::BackSpace;
+}
+
+bool IsInlineInstructionLeftKey(const KeyEvent& key_event) {
+  return !(key_event.mask & ibus::RELEASE_MASK) &&
+         key_event.keycode == ibus::Left;
+}
+
+bool IsInlineInstructionRightKey(const KeyEvent& key_event) {
+  return !(key_event.mask & ibus::RELEASE_MASK) &&
+         key_event.keycode == ibus::Right;
+}
+
+bool IsPlainInlineInstructionPrefixKey(const KeyEvent& key_event,
+                                       wchar_t prefix_char) {
+  if (key_event.mask & ibus::RELEASE_MASK) {
+    return false;
+  }
+  const auto modifiers = key_event.mask & ibus::MODIFIER_MASK;
+  if (modifiers & (ibus::CONTROL_MASK | ibus::ALT_MASK | ibus::SUPER_MASK |
+                   ibus::HYPER_MASK | ibus::META_MASK)) {
+    return false;
+  }
+  return key_event.keycode == static_cast<ibus::Keycode>(prefix_char);
+}
+
+std::wstring CaptureCurrentPreeditText(RimeSessionId session_id);
+
+struct InlineInstructionPromptSnapshot {
+  std::wstring text;
+  size_t cursor_pos = 0;
+};
+
+InlineInstructionPromptSnapshot CaptureInlineInstructionPromptSnapshot(
+    RimeSessionId session_id);
+
+std::wstring CaptureInlineInstructionPromptSource(RimeSessionId session_id);
+
+std::wstring TrimInlineInstructionPrompt(const std::wstring& text);
+
+namespace {
+bool GetInlineInstructionSnapshot(
+    std::mutex& mutex,
+    std::map<WeaselSessionId, InlineInstructionState>& states,
+    WeaselSessionId ipc_id,
+    InlineInstructionState* state_out) {
+  if (!state_out || ipc_id == 0) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(mutex);
+  const auto it = states.find(ipc_id);
+  if (it == states.end()) {
+    return false;
+  }
+  *state_out = it->second;
+  return true;
+}
+
+bool HasActiveInlineInstructionState(
+    std::mutex& mutex,
+    std::map<WeaselSessionId, InlineInstructionState>& states,
+    WeaselSessionId ipc_id) {
+  InlineInstructionState state;
+  return GetInlineInstructionSnapshot(mutex, states, ipc_id, &state) &&
+         state.IsActive();
+}
+
+bool ShouldSuppressSpecialInstructionCandidates(
+    std::mutex& inline_mutex,
+    std::map<WeaselSessionId, InlineInstructionState>& inline_states,
+    WeaselSessionId ipc_id,
+    const char* input_text) {
+  if (!input_text) {
+    return false;
+  }
+  if (!HasActiveInlineInstructionState(inline_mutex, inline_states, ipc_id)) {
+    return false;
+  }
+  return IsInstructionLookupInputText(input_text) ||
+         IsSystemCommandInputText(input_text);
+}
+}  // namespace
+
+bool SplitInlineInstructionText(const std::wstring& text,
+                                wchar_t prefix_char,
+                                std::wstring* before_prefix,
+                                std::wstring* prompt_text) {
+  if (!before_prefix || !prompt_text) {
+    return false;
+  }
+  const size_t prefix_pos = text.find(prefix_char);
+  if (prefix_pos == std::wstring::npos) {
+    return false;
+  }
+  *before_prefix = text.substr(0, prefix_pos);
+  *prompt_text = TrimInlineInstructionPrompt(text.substr(prefix_pos + 1));
+  return true;
+}
+
+std::wstring TrimInlineInstructionPrompt(const std::wstring& text) {
+  size_t begin = 0;
+  while (begin < text.size() &&
+         std::iswspace(static_cast<wint_t>(text[begin]))) {
+    ++begin;
+  }
+  size_t end = text.size();
+  while (end > begin && std::iswspace(static_cast<wint_t>(text[end - 1]))) {
+    --end;
+  }
+  return text.substr(begin, end - begin);
+}
+
+bool ExtractInlineInstructionPrompt(const std::wstring& preedit_text,
+                                    wchar_t prefix_char,
+                                    std::wstring* before_prefix,
+                                    std::wstring* prompt_text) {
+  if (!SplitInlineInstructionText(preedit_text, prefix_char, before_prefix,
+                                  prompt_text) ||
+      prompt_text->empty()) {
+    return false;
+  }
+  return true;
+}
+
+std::wstring BuildInlineInstructionDisplayPrefixText(
+    wchar_t prefix_char,
+    const InlineInstructionState& state) {
+  std::wstring display_prefix = state.pending_commit_text;
+  if (state.has_selected_option && !state.selected_option.name.empty()) {
+    display_prefix.append(L"【")
+        .append(state.selected_option.name)
+        .append(L"】，");
+    return display_prefix;
+  }
+  display_prefix.push_back(prefix_char);
+  return display_prefix;
+}
+
+std::wstring BuildInlineInstructionStatusText(
+    wchar_t prefix_char,
+    const InlineInstructionState& state) {
+  return BuildInlineInstructionDisplayPrefixText(prefix_char, state) +
+         state.prompt_text + L" [AI处理中...]";
+}
+
+std::wstring BuildInlineInstructionEditingText(
+    wchar_t prefix_char,
+    const InlineInstructionState& state) {
+  return BuildInlineInstructionDisplayPrefixText(prefix_char, state) +
+         state.prompt_text;
+}
+
+size_t ClampInlineInstructionCursorOffset(size_t cursor_offset,
+                                          const std::wstring& prompt_text) {
+  return min(cursor_offset, prompt_text.size());
+}
+
+size_t GetInlineInstructionPromptCursorPosition(
+    const InlineInstructionState& state) {
+  const size_t cursor_offset =
+      ClampInlineInstructionCursorOffset(state.cursor_offset, state.prompt_text);
+  return state.prompt_text.size() - cursor_offset;
+}
+
+size_t GetInlineInstructionDisplayCursorPosition(
+    wchar_t prefix_char,
+    const InlineInstructionState& state,
+    const std::wstring& preedit_text) {
+  if (state.phase != InlineInstructionPhase::kEditing) {
+    return preedit_text.size();
+  }
+  const size_t display_prefix_len =
+      BuildInlineInstructionDisplayPrefixText(prefix_char, state).size();
+  return min(display_prefix_len + GetInlineInstructionPromptCursorPosition(state),
+             preedit_text.size());
+}
+
+void AddInlineInstructionCursorAttribute(weasel::Text* text,
+                                         size_t cursor_pos) {
+  if (!text) {
+    return;
+  }
+  weasel::TextAttribute attr;
+  attr.type = HIGHLIGHTED;
+  attr.range.start = static_cast<int>(cursor_pos);
+  attr.range.end = static_cast<int>(cursor_pos);
+  attr.range.cursor = static_cast<int>(cursor_pos);
+  text->attributes.push_back(attr);
+}
+
+std::wstring BuildInlineInstructionActivePromptText(
+    RimeSessionId session_id,
+    const InlineInstructionState& state) {
+  if (state.phase != InlineInstructionPhase::kEditing) {
+    return state.prompt_text;
+  }
+  const std::wstring live_text = CaptureInlineInstructionPromptSource(session_id);
+  return state.committed_prompt_text + live_text;
+}
+
+bool TryGetInlineInstructionSessionText(RimeSessionId session_id,
+                                        wchar_t prefix_char,
+                                        std::wstring* before_prefix,
+                                        std::wstring* prompt_text,
+                                        bool* has_prefix) {
+  if (!before_prefix || !prompt_text || !has_prefix) {
+    return false;
+  }
+
+  *before_prefix = std::wstring();
+  *prompt_text = std::wstring();
+  *has_prefix = false;
+
+  const std::wstring preedit_text = CaptureCurrentPreeditText(session_id);
+  if (SplitInlineInstructionText(preedit_text, prefix_char, before_prefix,
+                                 prompt_text)) {
+    *has_prefix = true;
+    return true;
+  }
+
+  const char* input_text = rime_api->get_input(session_id);
+  const std::wstring input_w = input_text ? u8tow(input_text) : std::wstring();
+  if (SplitInlineInstructionText(input_w, prefix_char, before_prefix,
+                                 prompt_text)) {
+    *has_prefix = true;
+    return true;
+  }
+
+  *has_prefix = preedit_text.find(prefix_char) != std::wstring::npos ||
+                input_w.find(prefix_char) != std::wstring::npos;
+  return false;
 }
 
 bool IsSystemCommandCandidate(const RimeCandidate& candidate) {
@@ -620,6 +1321,26 @@ std::string BuildAIAssistantUserInput(const std::wstring& context_text) {
       "Context:\n" + wtou8(context_text) +
       "\n\nContinue writing from the end of that context.";
   return prompt;
+}
+
+std::wstring BuildInlineInstructionMockResult(
+    const AIPanelInstitutionOption* option,
+    const std::wstring& prompt_text) {
+  const std::wstring instruction_name =
+      option && !option->name.empty() ? option->name : L"AI指令";
+  const std::wstring normalized_prompt = TrimInlineInstructionPrompt(prompt_text);
+  const std::wstring display_prompt =
+      normalized_prompt.empty() ? L"（空内容）" : normalized_prompt;
+  if (instruction_name.find(L"续写") != std::wstring::npos) {
+    return L"【模拟返回】继续围绕“" + display_prompt +
+           L"”补一段内容：为了让语气更自然，可以顺着上一句继续展开，补充一两句细节，再把结尾收住。";
+  }
+  if (instruction_name.find(L"翻译") != std::wstring::npos) {
+    return L"【模拟返回】这是“" + display_prompt +
+           L"”的示例翻译结果，你后面接好真实接口后，这里会替换成真实返回内容。";
+  }
+  return L"【模拟返回】已触发「" + instruction_name + L"」，收到内容："
+         + display_prompt + L"。这里先返回一段 mock 文本用于联调。";
 }
 
 std::string BuildAIAssistantRequestBody(const AIAssistantConfig& config,
@@ -1234,6 +1955,32 @@ std::wstring CaptureCurrentPreeditText(RimeSessionId session_id) {
   return preedit_text;
 }
 
+InlineInstructionPromptSnapshot CaptureInlineInstructionPromptSnapshot(
+    RimeSessionId session_id) {
+  InlineInstructionPromptSnapshot snapshot;
+  RIME_STRUCT(RimeContext, ctx);
+  if (rime_api->get_context(session_id, &ctx)) {
+    if (ctx.composition.preedit && ctx.composition.length > 0) {
+      snapshot.text = u8tow(ctx.composition.preedit);
+      snapshot.cursor_pos = static_cast<size_t>(max(
+          0, utf8towcslen(ctx.composition.preedit, ctx.composition.cursor_pos)));
+      snapshot.cursor_pos = min(snapshot.cursor_pos, snapshot.text.size());
+    } else if (ctx.commit_text_preview) {
+      snapshot.text = u8tow(ctx.commit_text_preview);
+      snapshot.cursor_pos = snapshot.text.size();
+    }
+    rime_api->free_context(&ctx);
+  }
+  if (snapshot.text.empty()) {
+    const char* input_text = rime_api->get_input(session_id);
+    if (input_text) {
+      snapshot.text = u8tow(input_text);
+      snapshot.cursor_pos = snapshot.text.size();
+    }
+  }
+  return snapshot;
+}
+
 std::wstring NormalizePreeditForAsciiToggle(const std::wstring& preedit_text) {
   if (preedit_text.empty()) {
     return preedit_text;
@@ -1262,6 +2009,22 @@ std::wstring CaptureRawCompositionPreeditText(RimeSessionId session_id) {
     rime_api->free_context(&ctx);
   }
   return NormalizePreeditForAsciiToggle(preedit_text);
+}
+
+std::wstring CaptureCompositionPreeditText(RimeSessionId session_id) {
+  RIME_STRUCT(RimeContext, ctx);
+  std::wstring preedit_text;
+  if (rime_api->get_context(session_id, &ctx)) {
+    if (ctx.composition.preedit && ctx.composition.length > 0) {
+      preedit_text = u8tow(ctx.composition.preedit);
+    }
+    rime_api->free_context(&ctx);
+  }
+  return preedit_text;
+}
+
+std::wstring CaptureInlineInstructionPromptSource(RimeSessionId session_id) {
+  return CaptureInlineInstructionPromptSnapshot(session_id).text;
 }
 
 bool IsAIAssistantTriggerKey(const AIAssistantConfig& config,
@@ -1479,6 +2242,49 @@ std::wstring ResolveAIAssistantLoginStatePath(const AIAssistantConfig& config) {
     fs_path = WeaselUserDataPath() / fs_path;
   }
   return fs_path.wstring();
+}
+
+std::wstring ResolveAIAssistantUserInfoCachePath(
+    const AIAssistantConfig& config) {
+  const fs::path login_state_path(ResolveAIAssistantLoginStatePath(config));
+  return (login_state_path.parent_path() / L"ai_user_info_cache.json")
+      .wstring();
+}
+
+bool SaveAIAssistantUserInfoCache(const AIAssistantConfig& config,
+                                  const std::string& response_body) {
+  if (response_body.empty()) {
+    return false;
+  }
+
+  rapidjson::Document doc;
+  doc.Parse(response_body.c_str(), response_body.size());
+  if (doc.HasParseError() || !doc.IsObject()) {
+    return false;
+  }
+
+  const fs::path cache_path = ResolveAIAssistantUserInfoCachePath(config);
+  std::error_code ec;
+  fs::create_directories(cache_path.parent_path(), ec);
+
+  std::ofstream output(cache_path, std::ios::binary | std::ios::trunc);
+  if (!output) {
+    return false;
+  }
+  output.write(response_body.data(),
+               static_cast<std::streamsize>(response_body.size()));
+  return output.good();
+}
+
+void ClearAIAssistantUserInfoCache(const AIAssistantConfig& config) {
+  const fs::path cache_path(ResolveAIAssistantUserInfoCachePath(config));
+  std::error_code remove_error;
+  fs::remove(cache_path, remove_error);
+  if (remove_error) {
+    LOG(WARNING) << "AI user info cache remove failed: "
+                 << cache_path.u8string()
+                 << ", error=" << remove_error.message();
+  }
 }
 
 std::string TrimAsciiWhitespace(const std::string& input) {
@@ -1800,6 +2606,8 @@ bool ParseHttpUrlOrigin(const std::wstring& url,
 std::wstring BuildHttpOrigin(const std::wstring& scheme,
                              const std::wstring& host,
                              INTERNET_PORT port);
+std::vector<std::wstring> BuildAIAssistantUserInfoEndpointCandidates(
+    const AIAssistantConfig& config);
 
 std::string BuildAIAssistantInstitutionListRequestBody(
     const AIAssistantConfig& config) {
@@ -1880,7 +2688,11 @@ bool ParseAIAssistantInstitutionList(
       continue;
     }
     std::string id = ReadFirstStringLikeJsonMember(
-        *it, {"insId", "id", "insCode", "code", "tenantId", "orgId"});
+        *it, {"insId", "id", "tenantId", "orgId"});
+    std::string lookup_text = ReadFirstStringLikeJsonMember(
+        *it, {"insCode",      "code",       "shortcutCode", "shortcut",
+              "spell",        "spellCode",  "pinyin",       "py",
+              "keyword",      "keywords",   "query",        "queryCode"});
     std::string name = ReadFirstStringLikeJsonMember(
         *it, {"insName", "name", "tenantName", "title", "label"});
     std::string app_key = ReadFirstStringLikeJsonMember(
@@ -1893,10 +2705,11 @@ bool ParseAIAssistantInstitutionList(
       continue;
     }
     if (id.empty()) {
-      id = name;
+      id = !lookup_text.empty() ? lookup_text : name;
     }
     options->push_back(AIPanelInstitutionOption(
-        u8tow(id), u8tow(name), u8tow(app_key), u8tow(template_content)));
+        u8tow(id), u8tow(name), u8tow(lookup_text), u8tow(app_key),
+        u8tow(template_content)));
   }
 
   if (options->empty()) {
@@ -2213,6 +3026,281 @@ bool FetchAIAssistantInstitutionOptions(
     *error_message = last_error;
   }
   return false;
+}
+
+bool FetchAIAssistantUserInfo(const AIAssistantConfig& config,
+                              const std::string& token,
+                              const std::string& tenant_id,
+                              std::string* response_body,
+                              std::string* error_message,
+                              int* http_status_code = nullptr) {
+  if (!response_body) {
+    if (error_message) {
+      *error_message = "User info response output is null.";
+    }
+    return false;
+  }
+  response_body->clear();
+  if (error_message) {
+    error_message->clear();
+  }
+  if (http_status_code) {
+    *http_status_code = 0;
+  }
+  if (token.empty()) {
+    if (error_message) {
+      *error_message = "User info request token is empty.";
+    }
+    return false;
+  }
+
+  const auto is_auth_failure_code = [](int code) -> bool {
+    switch (code) {
+      case 401:
+      case 11001:
+      case 11011:
+      case 11012:
+      case 11013:
+      case 11014:
+      case 11015:
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  const std::vector<std::wstring> endpoint_candidates =
+      BuildAIAssistantUserInfoEndpointCandidates(config);
+  if (endpoint_candidates.empty()) {
+    if (error_message) {
+      *error_message = "No user info endpoint could be resolved.";
+    }
+    return false;
+  }
+
+  std::string last_error = "User info request failed.";
+  int last_status_code = 0;
+
+  for (const auto& endpoint : endpoint_candidates) {
+    URL_COMPONENTS parts = {0};
+    parts.dwStructSize = sizeof(parts);
+    parts.dwSchemeLength = static_cast<DWORD>(-1);
+    parts.dwHostNameLength = static_cast<DWORD>(-1);
+    parts.dwUrlPathLength = static_cast<DWORD>(-1);
+    parts.dwExtraInfoLength = static_cast<DWORD>(-1);
+    if (!WinHttpCrackUrl(endpoint.c_str(), 0, 0, &parts)) {
+      last_error = "Unable to parse user info endpoint URL.";
+      continue;
+    }
+
+    const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
+    std::wstring object_name =
+        parts.dwUrlPathLength > 0
+            ? std::wstring(parts.lpszUrlPath, parts.dwUrlPathLength)
+            : std::wstring(L"/");
+    if (parts.dwExtraInfoLength > 0) {
+      object_name.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
+    }
+
+    ScopedWinHttpHandle session(
+        WinHttpOpen(L"WeaselAIAssistantUserInfo/1.0",
+                    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+    if (!session.valid()) {
+      last_error = "WinHTTP session creation failed for user info.";
+      continue;
+    }
+    WinHttpSetTimeouts(session.get(), config.timeout_ms, config.timeout_ms,
+                       config.timeout_ms, config.timeout_ms);
+
+    ScopedWinHttpHandle connection(
+        WinHttpConnect(session.get(), host.c_str(), parts.nPort, 0));
+    if (!connection.valid()) {
+      last_error = "WinHTTP connection failed for user info endpoint.";
+      continue;
+    }
+
+    const DWORD request_flags =
+        parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0;
+    ScopedWinHttpHandle request(
+        WinHttpOpenRequest(connection.get(), L"GET", object_name.c_str(),
+                           nullptr, WINHTTP_NO_REFERER,
+                           WINHTTP_DEFAULT_ACCEPT_TYPES, request_flags));
+    if (!request.valid()) {
+      last_error = "WinHTTP request creation failed for user info.";
+      continue;
+    }
+
+    std::wstring headers = L"Accept: application/json\r\n";
+    if (!tenant_id.empty()) {
+      const std::wstring tenant = u8tow(tenant_id);
+      headers += L"TenantId: ";
+      headers += tenant;
+      headers += L"\r\nTenantid: ";
+      headers += tenant;
+      headers += L"\r\n";
+    }
+    {
+      const std::wstring token_text = u8tow(token);
+      headers += L"Token: ";
+      headers += token_text;
+      headers += L"\r\nSA-TOKEN: ";
+      headers += token_text;
+      headers += L"\r\nOVERTOKEN: ";
+      headers += token_text;
+      headers += L"\r\n";
+    }
+    WinHttpAddRequestHeaders(
+        request.get(), headers.c_str(), static_cast<DWORD>(-1),
+        WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+
+    if (!WinHttpSendRequest(request.get(), WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                            WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+        !WinHttpReceiveResponse(request.get(), nullptr)) {
+      last_error = "Sending user info request failed.";
+      continue;
+    }
+
+    DWORD status_code = 0;
+    DWORD status_code_size = sizeof(status_code);
+    WinHttpQueryHeaders(request.get(),
+                        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                        WINHTTP_HEADER_NAME_BY_INDEX, &status_code,
+                        &status_code_size, WINHTTP_NO_HEADER_INDEX);
+    last_status_code = static_cast<int>(status_code);
+
+    std::string body;
+    bool read_ok = true;
+    for (;;) {
+      DWORD available = 0;
+      if (!WinHttpQueryDataAvailable(request.get(), &available)) {
+        last_error = "Failed to read user info response.";
+        read_ok = false;
+        break;
+      }
+      if (available == 0) {
+        break;
+      }
+      std::string chunk(available, '\0');
+      DWORD downloaded = 0;
+      if (!WinHttpReadData(request.get(), chunk.data(), available,
+                           &downloaded)) {
+        last_error = "Failed while downloading user info response.";
+        read_ok = false;
+        break;
+      }
+      chunk.resize(downloaded);
+      body += chunk;
+    }
+    if (!read_ok) {
+      continue;
+    }
+
+    rapidjson::Document document;
+    document.Parse(body.c_str(), body.size());
+
+    int response_code = 200;
+    std::string response_message;
+    if (!document.HasParseError() && document.IsObject()) {
+      const auto code_it = document.FindMember("code");
+      if (code_it != document.MemberEnd()) {
+        if (code_it->value.IsInt()) {
+          response_code = code_it->value.GetInt();
+        } else if (code_it->value.IsUint()) {
+          response_code = static_cast<int>(code_it->value.GetUint());
+        } else if (code_it->value.IsInt64()) {
+          response_code = static_cast<int>(code_it->value.GetInt64());
+        } else if (code_it->value.IsUint64()) {
+          response_code = static_cast<int>(code_it->value.GetUint64());
+        } else if (code_it->value.IsString()) {
+          response_code = std::atoi(code_it->value.GetString());
+        }
+      }
+
+      const char* message_keys[] = {"msg", "message", "errorMsg", "error"};
+      for (const char* key : message_keys) {
+        const auto message_it = document.FindMember(key);
+        if (message_it != document.MemberEnd() &&
+            message_it->value.IsString()) {
+          response_message = message_it->value.GetString();
+          break;
+        }
+      }
+    }
+
+    if (status_code < 200 || status_code >= 300) {
+      last_error = !response_message.empty()
+                       ? response_message
+                       : "User info request returned HTTP " +
+                             std::to_string(status_code) + ".";
+      if (http_status_code) {
+        *http_status_code = static_cast<int>(status_code);
+      }
+      if (static_cast<int>(status_code) == 401) {
+        break;
+      }
+      continue;
+    }
+
+    if (document.HasParseError() || !document.IsObject()) {
+      last_error = "User info response is not valid JSON.";
+      continue;
+    }
+
+    if (response_code != 0 && response_code != 200) {
+      last_error = !response_message.empty()
+                       ? response_message
+                       : "User info response code " +
+                             std::to_string(response_code) + ".";
+      if (is_auth_failure_code(response_code)) {
+        last_status_code = 401;
+        if (http_status_code) {
+          *http_status_code = 401;
+        }
+        break;
+      }
+      continue;
+    }
+
+    *response_body = std::move(body);
+    if (http_status_code) {
+      *http_status_code = static_cast<int>(status_code);
+    }
+    return true;
+  }
+
+  if (http_status_code && *http_status_code == 0) {
+    *http_status_code = last_status_code;
+  }
+  if (error_message) {
+    *error_message = last_error;
+  }
+  return false;
+}
+
+bool RefreshAIAssistantUserInfoCache(const AIAssistantConfig& config,
+                                     const std::string& token,
+                                     const std::string& tenant_id,
+                                     std::string* error_message = nullptr,
+                                     int* http_status_code = nullptr) {
+  std::string response_body;
+  const bool ok = FetchAIAssistantUserInfo(config, token, tenant_id,
+                                           &response_body, error_message,
+                                           http_status_code);
+  if (!ok) {
+    if (http_status_code && *http_status_code == 401) {
+      ClearAIAssistantUserInfoCache(config);
+    }
+    return false;
+  }
+
+  if (!SaveAIAssistantUserInfoCache(config, response_body)) {
+    if (error_message) {
+      *error_message = "User info cache save failed.";
+    }
+    return false;
+  }
+  return true;
 }
 
 std::wstring UrlEncodeQueryComponent(const std::string& input) {
@@ -2735,6 +3823,50 @@ std::vector<std::wstring> BuildRefreshTokenEndpointCandidates(
   if (!config.login_url.empty()) {
     AddRefreshEndpointCandidatesFromUrl(u8tow(config.login_url), &endpoints);
   }
+  return endpoints;
+}
+
+void AddAIAssistantUserInfoEndpointCandidatesFromUrl(
+    const std::wstring& url,
+    std::vector<std::wstring>* endpoints) {
+  if (!endpoints) {
+    return;
+  }
+  std::wstring scheme;
+  std::wstring host;
+  INTERNET_PORT port = 0;
+  if (!ParseHttpUrlOrigin(url, &scheme, &host, &port)) {
+    return;
+  }
+  const std::wstring origin = BuildHttpOrigin(scheme, host, port);
+  if (origin.empty()) {
+    return;
+  }
+  AddUniqueEndpoint(endpoints,
+                    origin + L"/lamp-api/oauth/anyone/getUserInfoById");
+  AddUniqueEndpoint(endpoints,
+                    origin + L"/api/oauth/anyone/getUserInfoById");
+  if (port == 84 || port == 85) {
+    const INTERNET_PORT alt_port = port == 85
+                                       ? static_cast<INTERNET_PORT>(84)
+                                       : static_cast<INTERNET_PORT>(85);
+    const std::wstring alt_origin = BuildHttpOrigin(scheme, host, alt_port);
+    AddUniqueEndpoint(endpoints,
+                      alt_origin + L"/lamp-api/oauth/anyone/getUserInfoById");
+    AddUniqueEndpoint(endpoints,
+                      alt_origin + L"/api/oauth/anyone/getUserInfoById");
+  }
+}
+
+std::vector<std::wstring> BuildAIAssistantUserInfoEndpointCandidates(
+    const AIAssistantConfig& config) {
+  std::vector<std::wstring> endpoints;
+  AddAIAssistantUserInfoEndpointCandidatesFromUrl(u8tow(config.panel_url),
+                                                  &endpoints);
+  AddAIAssistantUserInfoEndpointCandidatesFromUrl(u8tow(config.login_url),
+                                                  &endpoints);
+  AddAIAssistantUserInfoEndpointCandidatesFromUrl(
+      u8tow(config.refresh_token_endpoint), &endpoints);
   return endpoints;
 }
 
@@ -3519,6 +4651,16 @@ DWORD RimeWithWeaselHandler::RemoveSession(WeaselSessionId ipc_id) {
     std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
     m_ai_injected_candidates.erase(ipc_id);
   }
+  {
+    std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
+    auto it = m_inline_instruction_states.find(ipc_id);
+    if (it != m_inline_instruction_states.end()) {
+      it->second.session_alive = false;
+      if (!it->second.detached_writeback) {
+        m_inline_instruction_states.erase(it);
+      }
+    }
+  }
   m_active_session = 0;
   return 0;
 }
@@ -3586,7 +4728,20 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
     m_active_session = ipc_id;
     return TRUE;
   }
+  const bool is_inline_control_key =
+      IsInlineInstructionSubmitKey(keyEvent) ||
+      IsInlineInstructionCancelKey(keyEvent);
+  if (is_inline_control_key &&
+      _TryHandleInlineInstructionKey(keyEvent, ipc_id, eat)) {
+    _UpdateUI(ipc_id);
+    m_active_session = ipc_id;
+    return TRUE;
+  }
   if (_TryHandleInjectedCandidateSelectKey(keyEvent, ipc_id, eat)) {
+    m_active_session = ipc_id;
+    return TRUE;
+  }
+  if (_TryHandleInstructionLookupCandidateSelectKey(keyEvent, ipc_id, eat)) {
     m_active_session = ipc_id;
     return TRUE;
   }
@@ -3625,6 +4780,12 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
   }
   Bool handled = rime_api->process_key(session_id, keyEvent.keycode,
                                        expand_ibus_modifier(keyEvent.mask));
+  if (!is_inline_control_key &&
+      _TryHandleInlineInstructionKey(keyEvent, ipc_id, eat)) {
+    _UpdateUI(ipc_id);
+    m_active_session = ipc_id;
+    return TRUE;
+  }
   // vim_mode when keydown only
   if (!handled && !(keyEvent.mask & ibus::Modifier::RELEASE_MASK)) {
     bool isVimBackInCommandMode =
@@ -3649,6 +4810,14 @@ void RimeWithWeaselHandler::CommitComposition(WeaselSessionId ipc_id) {
   DLOG(INFO) << "Commit composition: ipc_id = " << ipc_id;
   if (m_disabled)
     return;
+  {
+    std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
+    auto it = m_inline_instruction_states.find(ipc_id);
+    if (it != m_inline_instruction_states.end() &&
+        it->second.phase == InlineInstructionPhase::kEditing) {
+      m_inline_instruction_states.erase(it);
+    }
+  }
   rime_api->commit_composition(to_session_id(ipc_id));
   _UpdateUI(ipc_id);
   m_active_session = ipc_id;
@@ -3658,6 +4827,14 @@ void RimeWithWeaselHandler::ClearComposition(WeaselSessionId ipc_id) {
   DLOG(INFO) << "Clear composition: ipc_id = " << ipc_id;
   if (m_disabled)
     return;
+  {
+    std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
+    auto it = m_inline_instruction_states.find(ipc_id);
+    if (it != m_inline_instruction_states.end() &&
+        it->second.phase == InlineInstructionPhase::kEditing) {
+      m_inline_instruction_states.erase(it);
+    }
+  }
   rime_api->clear_composition(to_session_id(ipc_id));
   _UpdateUI(ipc_id);
   m_active_session = ipc_id;
@@ -3675,17 +4852,38 @@ void RimeWithWeaselHandler::SelectCandidateOnCurrentPage(
     m_active_session = ipc_id;
     return;
   }
+  AIPanelInstitutionOption lookup_option;
+  if (_TryResolveInstructionLookupCandidate(index, false, ipc_id,
+                                            &lookup_option)) {
+    const bool handled = lookup_option.IsSystemCommand()
+                             ? _ExecuteInjectedSystemCommand(ipc_id,
+                                                             lookup_option)
+                             : _EnterInlineInstructionForOption(ipc_id,
+                                                                lookup_option);
+    if (handled) {
+      _UpdateUI(ipc_id);
+      m_active_session = ipc_id;
+      return;
+    }
+  }
 
   size_t rime_index = index;
+  bool instruction_lookup_mode = false;
   {
     std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
     const auto it = m_ai_injected_candidates.find(ipc_id);
-    if (it != m_ai_injected_candidates.end() &&
-        !it->second.options.empty() &&
-        index >= it->second.options.size()) {
-      rime_index = index - it->second.options.size();
-      m_ai_injected_candidates.erase(it);
+    if (it != m_ai_injected_candidates.end()) {
+      instruction_lookup_mode = it->second.instruction_lookup_mode;
+      const size_t injected_count = GetInjectedCandidateVisibleCount(it->second);
+      if (!instruction_lookup_mode && injected_count != 0 &&
+          index >= injected_count) {
+        rime_index = index - injected_count;
+        m_ai_injected_candidates.erase(it);
+      }
     }
+  }
+  if (instruction_lookup_mode) {
+    return;
   }
   rime_api->select_candidate_on_current_page(to_session_id(ipc_id), rime_index);
 }
@@ -3697,16 +4895,23 @@ bool RimeWithWeaselHandler::HighlightCandidateOnCurrentPage(
   DLOG(INFO) << "highlight candidate on current page, ipc_id = " << ipc_id
              << ", index = " << index;
   size_t rime_index = index;
+  bool instruction_lookup_mode = false;
   {
     std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
     const auto it = m_ai_injected_candidates.find(ipc_id);
-    if (it != m_ai_injected_candidates.end() &&
-        !it->second.options.empty()) {
-      if (index < it->second.options.size()) {
-        return true;
+    if (it != m_ai_injected_candidates.end()) {
+      instruction_lookup_mode = it->second.instruction_lookup_mode;
+      const size_t injected_count = GetInjectedCandidateVisibleCount(it->second);
+      if (injected_count != 0) {
+        if (index < injected_count) {
+          return true;
+        }
+        rime_index = index - injected_count;
       }
-      rime_index = index - it->second.options.size();
     }
+  }
+  if (instruction_lookup_mode) {
+    return true;
   }
   bool res = rime_api->highlight_candidate_on_current_page(
       to_session_id(ipc_id), rime_index);
@@ -3720,10 +4925,87 @@ bool RimeWithWeaselHandler::ChangePage(bool backward,
                                        EatLine eat) {
   DLOG(INFO) << "change page, ipc_id = " << ipc_id
              << (backward ? "backward" : "foreward");
+  bool handled_injected_page = false;
+  bool has_injected_instruction_lookup = false;
+  {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    const auto it = m_ai_injected_candidates.find(ipc_id);
+    if (it != m_ai_injected_candidates.end() &&
+        it->second.instruction_lookup_mode && it->second.page_size > 0) {
+      has_injected_instruction_lookup = true;
+      const size_t total_count = it->second.options.size();
+      const size_t total_pages =
+          total_count == 0
+              ? 0
+              : (total_count + it->second.page_size - 1) / it->second.page_size;
+      if (total_pages > 1) {
+        if (backward) {
+          if (it->second.current_page == 0) {
+            return false;
+          }
+          --it->second.current_page;
+        } else {
+          if (it->second.current_page + 1 >= total_pages) {
+            return false;
+          }
+          ++it->second.current_page;
+        }
+        handled_injected_page = true;
+      }
+    }
+  }
+  if (handled_injected_page) {
+    _Respond(ipc_id, eat);
+    _UpdateUI(ipc_id);
+    return true;
+  }
+  if (has_injected_instruction_lookup) {
+    return false;
+  }
   bool res = rime_api->change_page(to_session_id(ipc_id), backward);
   _Respond(ipc_id, eat);
   _UpdateUI(ipc_id);
   return res;
+}
+
+BOOL RimeWithWeaselHandler::SyncSession(WeaselSessionId ipc_id, EatLine eat) {
+  if (ipc_id == 0) {
+    return FALSE;
+  }
+  std::wstring commit_text;
+  std::wstring error_text;
+  bool has_error = false;
+  bool has_completion = false;
+  {
+    std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
+    auto it = m_inline_instruction_states.find(ipc_id);
+    if (it != m_inline_instruction_states.end() &&
+        it->second.phase == InlineInstructionPhase::kRequesting &&
+        (it->second.has_error || !it->second.result_text.empty())) {
+      has_completion = true;
+      has_error = it->second.has_error;
+      commit_text = it->second.result_text;
+      error_text = it->second.error_text;
+      m_inline_instruction_states.erase(it);
+    }
+  }
+  if (has_completion) {
+    if (has_error) {
+      if (!error_text.empty()) {
+        LOG(WARNING) << "Inline AI request failed: " << wtou8(error_text);
+      }
+      _Respond(ipc_id, eat);
+    } else {
+      _Respond(ipc_id, eat, &commit_text);
+    }
+    _UpdateUI(ipc_id);
+    m_active_session = ipc_id;
+    return TRUE;
+  }
+  _Respond(ipc_id, eat);
+  _UpdateUI(ipc_id);
+  m_active_session = ipc_id;
+  return TRUE;
 }
 
 void RimeWithWeaselHandler::FocusIn(DWORD client_caps, WeaselSessionId ipc_id) {
@@ -3747,6 +5029,17 @@ void RimeWithWeaselHandler::FocusOut(DWORD param, WeaselSessionId ipc_id) {
   // Clear composition when focus is lost to prevent stale input state
   // This prevents prediction panel from appearing on next focus with certain key combinations
   rime_api->clear_composition(to_session_id(ipc_id));
+  {
+    std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
+    auto it = m_inline_instruction_states.find(ipc_id);
+    if (it != m_inline_instruction_states.end()) {
+      if (it->second.phase == InlineInstructionPhase::kEditing) {
+        m_inline_instruction_states.erase(it);
+      } else if (it->second.phase == InlineInstructionPhase::kRequesting) {
+        it->second.detached_writeback = true;
+      }
+    }
+  }
   if (m_ui)
     m_ui->Hide();
   m_active_session = 0;
@@ -3928,16 +5221,259 @@ void RimeWithWeaselHandler::_GetCandidateInfo(CandidateInfo& cinfo,
   _TryInjectAIAssistantCandidates(ipc_id, ctx, &cinfo);
 }
 
+bool RimeWithWeaselHandler::_TryBuildInstructionLookupCandidates(
+    WeaselSessionId ipc_id,
+    const std::string& input_text,
+    int page_size,
+    CandidateInfo* cinfo) {
+  if (!cinfo) {
+    return false;
+  }
+
+  const std::string query =
+      NormalizeInstructionLookupAscii(ExtractInstructionLookupQuery(input_text));
+  if (query.empty()) {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    m_ai_injected_candidates.erase(ipc_id);
+    return false;
+  }
+
+  std::vector<AIPanelInstitutionOption> all_options =
+      SnapshotBuiltinAIAssistantInstructions();
+  {
+    const std::vector<AIPanelInstitutionOption> dynamic_options =
+        m_ai_instructions.Snapshot();
+    all_options.insert(all_options.end(), dynamic_options.begin(),
+                       dynamic_options.end());
+  }
+  if (all_options.empty()) {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    m_ai_injected_candidates.erase(ipc_id);
+    return false;
+  }
+
+  constexpr size_t kMaxInstructionLookupPageSize = 10;
+  size_t resolved_page_size =
+      page_size > 0 ? static_cast<size_t>(page_size)
+                    : kMaxInstructionLookupPageSize;
+  resolved_page_size =
+      (std::min)(resolved_page_size, kMaxInstructionLookupPageSize);
+  if (resolved_page_size == 0) {
+    resolved_page_size = 1;
+  }
+
+  size_t preserved_page = 0;
+  {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    const auto it = m_ai_injected_candidates.find(ipc_id);
+    if (it != m_ai_injected_candidates.end() &&
+        it->second.instruction_lookup_mode &&
+        it->second.lookup_query == query) {
+      preserved_page = it->second.current_page;
+      if (it->second.page_size > 0) {
+        resolved_page_size = it->second.page_size;
+      }
+    }
+  }
+
+  std::vector<InstructionLookupRankedOption> ranked_options;
+  ranked_options.reserve(all_options.size());
+  std::set<std::wstring> seen_keys;
+  size_t order = 0;
+  for (const auto& option : all_options) {
+    std::wstring unique_key = option.id.empty() ? option.name : option.id;
+    if (unique_key.empty() || seen_keys.find(unique_key) != seen_keys.end()) {
+      ++order;
+      continue;
+    }
+    seen_keys.insert(unique_key);
+
+    std::vector<std::string> aliases;
+    std::set<std::string> seen_aliases;
+    AddInstructionLookupAlias(wtou8(option.name), &aliases, &seen_aliases);
+    AddInstructionLookupAliasesFromCodeText(option.lookup_text, &aliases,
+                                            &seen_aliases);
+    AddInstructionLookupAliasesFromCodeText(option.id, &aliases,
+                                            &seen_aliases);
+    AddInstructionLookupAliasesFromCodeText(option.app_key, &aliases,
+                                            &seen_aliases);
+    AddInstructionLookupAliasesFromCodeText(option.system_command_id, &aliases,
+                                            &seen_aliases);
+
+    std::string pinyin_full;
+    std::string pinyin_initials;
+    if (TryBuildInstructionLookupPinyinAliases(option.name, &pinyin_full,
+                                               &pinyin_initials)) {
+      AddInstructionLookupAlias(pinyin_full, &aliases, &seen_aliases);
+      AddInstructionLookupAlias(pinyin_initials, &aliases, &seen_aliases);
+    }
+
+    int best_score = 0;
+    for (const auto& alias : aliases) {
+      const int score = ScoreInstructionLookupAlias(query, alias);
+      if (score > best_score) {
+        best_score = score;
+      }
+    }
+    if (best_score <= 0) {
+      ++order;
+      continue;
+    }
+
+    InstructionLookupRankedOption ranked;
+    ranked.option = option;
+    ranked.score = best_score;
+    ranked.order = order++;
+    ranked_options.push_back(std::move(ranked));
+  }
+
+  if (ranked_options.empty()) {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    m_ai_injected_candidates.erase(ipc_id);
+    return false;
+  }
+
+  std::stable_sort(ranked_options.begin(), ranked_options.end(),
+                   [](const InstructionLookupRankedOption& left,
+                      const InstructionLookupRankedOption& right) {
+                     if (left.score != right.score) {
+                       return left.score > right.score;
+                     }
+                     if (left.option.name.size() != right.option.name.size()) {
+                       return left.option.name.size() < right.option.name.size();
+                     }
+                     return left.order < right.order;
+                   });
+
+  const size_t total_candidate_count = ranked_options.size();
+  const size_t total_pages =
+      (total_candidate_count + resolved_page_size - 1) / resolved_page_size;
+  const size_t current_page =
+      total_pages == 0 ? 0 : (std::min)(preserved_page, total_pages - 1);
+  const size_t page_begin = current_page * resolved_page_size;
+  const size_t candidate_count =
+      (std::min)(resolved_page_size, total_candidate_count - page_begin);
+
+  cinfo->candies.clear();
+  cinfo->comments.clear();
+  cinfo->labels.clear();
+  cinfo->candies.reserve(candidate_count);
+  cinfo->comments.reserve(candidate_count);
+  cinfo->labels.reserve(candidate_count);
+
+  AIAssistantInjectedCandidateState state;
+  state.instruction_lookup_mode = true;
+  state.lookup_query = query;
+  state.current_page = current_page;
+  state.page_size = resolved_page_size;
+  state.options.reserve(total_candidate_count);
+  for (const auto& ranked_option : ranked_options) {
+    state.options.push_back(ranked_option.option);
+  }
+
+  for (size_t i = 0; i < candidate_count; ++i) {
+    const auto& option = ranked_options[page_begin + i].option;
+    cinfo->candies.push_back(Text(escape_string(option.name)));
+    cinfo->comments.push_back(
+        Text(option.IsSystemCommand()
+                 ? L"系统指令"
+                 : (IsBuiltinAIAssistantInstructionId(option.id) ? L"默认指令"
+                                                                 : L"AI指令")));
+    cinfo->labels.push_back(Text(std::to_wstring((i + 1) % 10)));
+  }
+
+  cinfo->highlighted = 0;
+  cinfo->currentPage = static_cast<int>(current_page);
+  cinfo->totalPages = static_cast<int>(total_pages);
+  cinfo->is_last_page = current_page + 1 >= total_pages;
+  state.rime_highlighted = 0;
+  {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    m_ai_injected_candidates[ipc_id] = std::move(state);
+  }
+  return true;
+}
+
+bool RimeWithWeaselHandler::_TryMatchAIAssistantInstructionOption(
+    const std::wstring& text,
+    AIPanelInstitutionOption* option) const {
+  return MatchBuiltinAIAssistantInstruction(text, option) ||
+         m_ai_instructions.MatchExactName(text, option);
+}
+
+bool RimeWithWeaselHandler::_TryResolveInstructionLookupCandidate(
+    size_t candidate_index,
+    bool use_highlighted,
+    WeaselSessionId ipc_id,
+    AIPanelInstitutionOption* option) {
+  if (!option || ipc_id == 0) {
+    return false;
+  }
+
+  const RimeSessionId session_id = to_session_id(ipc_id);
+  const char* input_text = session_id != 0 ? rime_api->get_input(session_id)
+                                           : nullptr;
+  if (ShouldSuppressSpecialInstructionCandidates(
+          m_inline_instruction_mutex, m_inline_instruction_states, ipc_id,
+          input_text)) {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    m_ai_injected_candidates.erase(ipc_id);
+    return false;
+  }
+  if (!input_text || !IsInstructionLookupInputText(input_text)) {
+    return false;
+  }
+
+  RIME_STRUCT(RimeContext, ctx);
+  if (!rime_api->get_context(session_id, &ctx)) {
+    return false;
+  }
+
+  bool matched = false;
+  if (ctx.menu.num_candidates > 0 && ctx.menu.candidates) {
+    size_t resolved_index = candidate_index;
+    if (use_highlighted) {
+      resolved_index = static_cast<size_t>(max(
+          0, min(ctx.menu.highlighted_candidate_index, ctx.menu.num_candidates - 1)));
+    }
+    if (resolved_index < static_cast<size_t>(ctx.menu.num_candidates) &&
+        ctx.menu.candidates[resolved_index].text) {
+      matched = _TryMatchAIAssistantInstructionOption(
+          u8tow(ctx.menu.candidates[resolved_index].text), option);
+    }
+  }
+
+  rime_api->free_context(&ctx);
+  return matched;
+}
+
 bool RimeWithWeaselHandler::_TryInjectAIAssistantCandidates(
     WeaselSessionId ipc_id,
     RimeContext& ctx,
     CandidateInfo* cinfo) {
-  if (!cinfo || !m_ai_config.enabled || ipc_id == 0 || ctx.menu.page_no != 0 ||
-      ctx.menu.num_candidates <= 0) {
+  if (!cinfo || !m_ai_config.enabled || ipc_id == 0) {
     if (ipc_id != 0) {
       std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
       m_ai_injected_candidates.erase(ipc_id);
     }
+    return false;
+  }
+  if (HasActiveInlineInstructionState(m_inline_instruction_mutex,
+                                      m_inline_instruction_states, ipc_id)) {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    m_ai_injected_candidates.erase(ipc_id);
+    return false;
+  }
+  const RimeSessionId session_id = to_session_id(ipc_id);
+  const char* input_text =
+      session_id != 0 ? rime_api->get_input(session_id) : nullptr;
+  if (input_text && IsInstructionLookupInputText(input_text)) {
+    return _TryBuildInstructionLookupCandidates(ipc_id, input_text,
+                                                ctx.menu.page_size, cinfo);
+  }
+  if (ctx.menu.page_no != 0 || ctx.menu.num_candidates <= 0) {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    m_ai_injected_candidates.erase(ipc_id);
     return false;
   }
   {
@@ -3957,8 +5493,8 @@ bool RimeWithWeaselHandler::_TryInjectAIAssistantCandidates(
       continue;
     }
     const std::wstring candidate_name = u8tow(candidate_text);
-    if (MatchBuiltinAIAssistantInstruction(candidate_name, &matched_option) ||
-        m_ai_instructions.MatchExactName(candidate_name, &matched_option)) {
+    if (_TryMatchAIAssistantInstructionOption(candidate_name,
+                                              &matched_option)) {
       break;
     }
     matched_option = AIPanelInstitutionOption();
@@ -3997,6 +5533,57 @@ bool RimeWithWeaselHandler::_TryInjectAIAssistantCandidates(
   return true;
 }
 
+bool RimeWithWeaselHandler::_TryHandleInstructionLookupCandidateSelectKey(
+    KeyEvent keyEvent,
+    WeaselSessionId ipc_id,
+    EatLine eat) {
+  if (!m_ai_config.enabled || ipc_id == 0) {
+    return false;
+  }
+
+  const RimeSessionId session_id = to_session_id(ipc_id);
+  const char* input_text = session_id != 0 ? rime_api->get_input(session_id)
+                                           : nullptr;
+  if (ShouldSuppressSpecialInstructionCandidates(
+          m_inline_instruction_mutex, m_inline_instruction_states, ipc_id,
+          input_text)) {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    m_ai_injected_candidates.erase(ipc_id);
+    return false;
+  }
+  if (!input_text || !IsInstructionLookupInputText(input_text)) {
+    return false;
+  }
+
+  if (IsSystemCommandConfirmKey(keyEvent)) {
+    const bool handled = _TrySelectInjectedAIAssistantCandidate(0, ipc_id);
+    if (handled) {
+      _Respond(ipc_id, eat);
+      _UpdateUI(ipc_id);
+    }
+    return handled;
+  }
+
+  size_t candidate_index = 0;
+  if (!TryResolveCandidateSelectIndex(keyEvent, &candidate_index)) {
+    return false;
+  }
+  AIPanelInstitutionOption option;
+  if (!_TryResolveInstructionLookupCandidate(candidate_index, false,
+                                             ipc_id, &option)) {
+    return false;
+  }
+
+  const bool handled = option.IsSystemCommand()
+                           ? _ExecuteInjectedSystemCommand(ipc_id, option)
+                           : _EnterInlineInstructionForOption(ipc_id, option);
+  if (handled) {
+    _Respond(ipc_id, eat);
+    _UpdateUI(ipc_id);
+  }
+  return handled;
+}
+
 bool RimeWithWeaselHandler::_TrySelectInjectedAIAssistantCandidate(
     size_t index,
     WeaselSessionId ipc_id) {
@@ -4008,18 +5595,26 @@ bool RimeWithWeaselHandler::_TrySelectInjectedAIAssistantCandidate(
     }
   }
   AIPanelInstitutionOption option;
+  bool instruction_lookup_mode = false;
   {
     std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
     const auto it = m_ai_injected_candidates.find(ipc_id);
-    if (it == m_ai_injected_candidates.end() ||
-        index >= it->second.options.size()) {
+    if (it == m_ai_injected_candidates.end()) {
       return false;
     }
-    option = it->second.options[index];
+    const size_t visible_count = GetInjectedCandidateVisibleCount(it->second);
+    if (index >= visible_count) {
+      return false;
+    }
+    instruction_lookup_mode = it->second.instruction_lookup_mode;
+    option = it->second.options[ResolveInjectedCandidateIndex(it->second, index)];
     m_ai_injected_candidates.erase(it);
   }
   if (option.IsSystemCommand()) {
     return _ExecuteInjectedSystemCommand(ipc_id, option);
+  }
+  if (instruction_lookup_mode) {
+    return _EnterInlineInstructionForOption(ipc_id, option);
   }
   return _OpenAIPanelForInstruction(ipc_id, option);
 }
@@ -4034,13 +5629,18 @@ bool RimeWithWeaselHandler::_TryHandleInjectedCandidateSelectKey(
   }
 
   size_t injected_count = 0;
+  bool instruction_lookup_mode = false;
   {
     std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
     const auto it = m_ai_injected_candidates.find(ipc_id);
-    if (it == m_ai_injected_candidates.end() || it->second.options.empty()) {
+    if (it == m_ai_injected_candidates.end()) {
       return false;
     }
-    injected_count = it->second.options.size();
+    instruction_lookup_mode = it->second.instruction_lookup_mode;
+    injected_count = GetInjectedCandidateVisibleCount(it->second);
+    if (injected_count == 0) {
+      return false;
+    }
   }
 
   {
@@ -4061,6 +5661,9 @@ bool RimeWithWeaselHandler::_TryHandleInjectedCandidateSelectKey(
     }
     return handled;
   }
+  if (instruction_lookup_mode) {
+    return true;
+  }
 
   const size_t rime_index = selected_index - injected_count;
   {
@@ -4072,6 +5675,51 @@ bool RimeWithWeaselHandler::_TryHandleInjectedCandidateSelectKey(
     _Respond(ipc_id, eat);
     _UpdateUI(ipc_id);
   }
+  return true;
+}
+
+bool RimeWithWeaselHandler::_EnterInlineInstructionForOption(
+    WeaselSessionId ipc_id,
+    const AIPanelInstitutionOption& option) {
+  if (ipc_id == 0 || option.IsSystemCommand()) {
+    return false;
+  }
+  if (option.id.empty() && option.name.empty() &&
+      option.template_content.empty()) {
+    return false;
+  }
+  if (!_EnsureAIAssistantLogin()) {
+    return true;
+  }
+
+  const RimeSessionId session_id = to_session_id(ipc_id);
+  rime_api->clear_composition(session_id);
+
+  HWND target_hwnd = GetFocus();
+  if (!target_hwnd || !IsWindow(target_hwnd)) {
+    target_hwnd = GetForegroundWindow();
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    m_ai_injected_candidates.erase(ipc_id);
+  }
+  {
+    std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
+    InlineInstructionState& state = m_inline_instruction_states[ipc_id];
+    state.Reset();
+    state.session_alive = true;
+    state.detached_writeback = false;
+    state.phase = InlineInstructionPhase::kEditing;
+    state.slash_mode = true;
+    state.target_hwnd = target_hwnd;
+    state.has_selected_option = true;
+    state.selected_option = option;
+  }
+
+  DLOG(INFO) << "inline_ai: enter from instruction lookup ipc_id=" << ipc_id
+             << " option_id=" << wtou8(option.id)
+             << " option_name=" << wtou8(option.name);
   return true;
 }
 
@@ -4241,8 +5889,16 @@ void RimeWithWeaselHandler::_LoadAIAssistantConfig(RimeConfig* config) {
                                 &debug_dump_context)) {
     m_ai_config.debug_dump_context = !!debug_dump_context;
   }
+  Bool inline_instruction_enabled = True;
+  if (rime_api->config_get_bool(config,
+                                "ai_assistant/inline_instruction_enabled",
+                                &inline_instruction_enabled)) {
+    m_ai_config.inline_instruction_enabled = !!inline_instruction_enabled;
+  }
   ReadConfigString(config, "ai_assistant/trigger_hotkey",
                    &m_ai_config.trigger_hotkey);
+  ReadConfigString(config, "ai_assistant/inline_instruction_prefix",
+                   &m_ai_config.inline_instruction_prefix);
   ReadConfigString(config, "ai_assistant/endpoint", &m_ai_config.endpoint);
   ReadConfigString(config, "ai_assistant/api_key", &m_ai_config.api_key);
   ReadConfigString(config, "ai_assistant/model", &m_ai_config.model);
@@ -4283,6 +5939,9 @@ void RimeWithWeaselHandler::_LoadAIAssistantConfig(RimeConfig* config) {
   }
   if (m_ai_config.trigger_hotkey.empty()) {
     m_ai_config.trigger_hotkey = "Control+3";
+  }
+  if (m_ai_config.inline_instruction_prefix.size() != 1) {
+    m_ai_config.inline_instruction_prefix = "/";
   }
   if (!TryParseAiHotkeyConfig(m_ai_config.trigger_hotkey,
                               &m_ai_config.trigger_binding) ||
@@ -4554,6 +6213,7 @@ bool RimeWithWeaselHandler::_ForceAIAssistantRelogin() {
                  << state_path.u8string()
                  << ", error=" << remove_error.message();
   }
+  ClearAIAssistantUserInfoCache(m_ai_config);
 
   const bool started = _StartAIAssistantLoginFlow();
   if (!started) {
@@ -4831,6 +6491,16 @@ void RimeWithWeaselHandler::_RunAIAssistantLoginListener(
       m_ai_login_tenant_id = tenant_id;
       m_ai_login_refresh_token = refresh_token;
     }
+    ClearAIAssistantUserInfoCache(config);
+    std::string user_info_error;
+    int user_info_status_code = 0;
+    if (!RefreshAIAssistantUserInfoCache(config, token, tenant_id,
+                                         &user_info_error,
+                                         &user_info_status_code) &&
+        !user_info_error.empty()) {
+      LOG(WARNING) << "AI user info cache refresh failed: "
+                   << user_info_error;
+    }
     _RefreshAIAssistantInstructionCacheAsync();
     HWND panel_hwnd = nullptr;
     {
@@ -4956,6 +6626,196 @@ bool RimeWithWeaselHandler::_TryProcessAIAssistantTrigger(KeyEvent keyEvent,
 
   LOG(WARNING)
       << "AI panel window unavailable; skip sync fallback to avoid blocking.";
+  return true;
+}
+
+bool RimeWithWeaselHandler::_TryHandleInlineInstructionKey(
+    KeyEvent keyEvent,
+    WeaselSessionId ipc_id,
+    EatLine eat) {
+  if (!m_ai_config.enabled || !m_ai_config.inline_instruction_enabled ||
+      ipc_id == 0) {
+    return false;
+  }
+  const RimeSessionId session_id = to_session_id(ipc_id);
+
+  bool editing_active = false;
+  std::wstring editing_before_prefix;
+  std::wstring committed_prompt_text;
+  size_t previous_cursor_offset = 0;
+  {
+    std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
+    const auto it = m_inline_instruction_states.find(ipc_id);
+    if (it == m_inline_instruction_states.end() || !it->second.IsActive()) {
+      return false;
+    }
+    editing_active = it->second.phase == InlineInstructionPhase::kEditing;
+    if (editing_active) {
+      editing_before_prefix = it->second.pending_commit_text;
+      committed_prompt_text = it->second.committed_prompt_text;
+      previous_cursor_offset = it->second.cursor_offset;
+    }
+  }
+
+  if (IsInlineInstructionCancelKey(keyEvent)) {
+    bool should_respond = false;
+    bool clear_composition = false;
+    {
+      std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
+      auto it = m_inline_instruction_states.find(ipc_id);
+      if (it == m_inline_instruction_states.end()) {
+        return false;
+      }
+      if (it->second.phase == InlineInstructionPhase::kEditing) {
+        clear_composition = true;
+        DLOG(INFO) << "inline_ai: cancel editing ipc_id=" << ipc_id
+                   << " prompt=" << wtou8(it->second.prompt_text);
+        m_inline_instruction_states.erase(it);
+      } else if (it->second.phase == InlineInstructionPhase::kRequesting) {
+        DLOG(INFO) << "inline_ai: cancel requesting ipc_id=" << ipc_id
+                   << " prompt=" << wtou8(it->second.prompt_text);
+        m_inline_instruction_states.erase(it);
+        should_respond = true;
+      }
+    }
+    if (clear_composition) {
+      rime_api->clear_composition(session_id);
+      return false;
+    }
+    if (should_respond) {
+      _Respond(ipc_id, eat);
+      return true;
+    }
+  }
+  if (!editing_active) {
+    return false;
+  }
+
+  const InlineInstructionPromptSnapshot prompt_snapshot =
+      CaptureInlineInstructionPromptSnapshot(session_id);
+
+  if (!IsInlineInstructionSubmitKey(keyEvent)) {
+    bool should_respond = false;
+    {
+      std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
+      auto it = m_inline_instruction_states.find(ipc_id);
+      if (it == m_inline_instruction_states.end() ||
+          it->second.phase != InlineInstructionPhase::kEditing) {
+        return false;
+      }
+      InlineInstructionState& state = m_inline_instruction_states[ipc_id];
+      state.session_alive = true;
+      state.detached_writeback = false;
+      state.phase = InlineInstructionPhase::kEditing;
+      state.slash_mode = true;
+      const std::wstring rime_commit = _TakePendingCommitText(session_id);
+      if (!rime_commit.empty()) {
+        state.committed_prompt_text.append(rime_commit);
+      }
+      const bool is_backspace_key = IsInlineInstructionBackspaceKey(keyEvent);
+      const bool is_left_key = IsInlineInstructionLeftKey(keyEvent);
+      const bool is_right_key = IsInlineInstructionRightKey(keyEvent);
+      const InlineInstructionPromptSnapshot live_snapshot =
+          CaptureInlineInstructionPromptSnapshot(session_id);
+      const std::wstring live_prompt = live_snapshot.text;
+      state.pending_commit_text = editing_before_prefix;
+
+      if (live_prompt.empty() &&
+          (is_backspace_key || is_left_key || is_right_key)) {
+        state.prompt_text = state.committed_prompt_text;
+        size_t cursor_offset = ClampInlineInstructionCursorOffset(
+            previous_cursor_offset, state.prompt_text);
+        if (is_backspace_key) {
+          const size_t cursor_pos = state.prompt_text.size() - cursor_offset;
+          if (cursor_pos > 0) {
+            state.committed_prompt_text.erase(cursor_pos - 1, 1);
+            state.prompt_text = state.committed_prompt_text;
+            cursor_offset = ClampInlineInstructionCursorOffset(
+                cursor_offset, state.prompt_text);
+          }
+        } else if (is_left_key) {
+          cursor_offset = min(cursor_offset + 1, state.prompt_text.size());
+        } else if (is_right_key) {
+          cursor_offset = cursor_offset > 0 ? cursor_offset - 1 : 0;
+        }
+        state.cursor_offset = cursor_offset;
+        DLOG(INFO) << "inline_ai: consume editing key ipc_id=" << ipc_id
+                   << " backspace=" << is_backspace_key
+                   << " left=" << is_left_key << " right=" << is_right_key
+                   << " cursor_offset=" << state.cursor_offset
+                   << " prompt=" << wtou8(state.prompt_text);
+        should_respond = true;
+      } else {
+        state.prompt_text = state.committed_prompt_text + live_prompt;
+        if (!live_prompt.empty()) {
+          const size_t live_cursor =
+              min(live_snapshot.cursor_pos, live_prompt.size());
+          const size_t prompt_cursor =
+              min(state.committed_prompt_text.size() + live_cursor,
+                  state.prompt_text.size());
+          state.cursor_offset = state.prompt_text.size() - prompt_cursor;
+        } else {
+          state.cursor_offset = ClampInlineInstructionCursorOffset(
+              previous_cursor_offset, state.prompt_text);
+        }
+        DLOG(INFO) << "inline_ai: update editing ipc_id=" << ipc_id
+                   << " slash_mode=" << state.slash_mode
+                   << " prompt=" << wtou8(state.prompt_text)
+                   << " committed_prompt="
+                   << wtou8(state.committed_prompt_text)
+                   << " rime_commit=" << wtou8(rime_commit)
+                   << " cursor_offset=" << state.cursor_offset
+                   << " before_prefix=" << wtou8(state.pending_commit_text)
+                   << " raw_preedit="
+                   << wtou8(CaptureCurrentPreeditText(session_id));
+        if (state.prompt_text.empty() && !state.slash_mode &&
+            state.pending_commit_text.empty()) {
+          m_inline_instruction_states.erase(ipc_id);
+        }
+      }
+    }
+    if (should_respond) {
+      _Respond(ipc_id, eat);
+      return true;
+    }
+    return false;
+  }
+
+  std::wstring before_prefix = editing_before_prefix;
+  InlineInstructionState preview_state;
+  preview_state.phase = InlineInstructionPhase::kEditing;
+  preview_state.committed_prompt_text = committed_prompt_text;
+  preview_state.prompt_text = committed_prompt_text;
+  preview_state.pending_commit_text = editing_before_prefix;
+  std::wstring prompt_text = TrimInlineInstructionPrompt(
+      BuildInlineInstructionActivePromptText(session_id, preview_state));
+  if (prompt_text.empty()) {
+    DLOG(INFO) << "inline_ai: submit ignored because prompt empty ipc_id="
+               << ipc_id << " editing_active=" << editing_active
+               << " raw_preedit=" << wtou8(CaptureCurrentPreeditText(session_id));
+    return false;
+  }
+
+  std::wstring prefix_commit = before_prefix;
+  rime_api->clear_composition(session_id);
+  AIPanelInstitutionOption selected_option;
+  bool has_selected_option = false;
+  {
+    std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
+    const auto it = m_inline_instruction_states.find(ipc_id);
+    if (it != m_inline_instruction_states.end()) {
+      has_selected_option = it->second.has_selected_option;
+      selected_option = it->second.selected_option;
+      m_inline_instruction_states.erase(it);
+    }
+  }
+  std::wstring commit_text = prefix_commit;
+  commit_text.append(BuildInlineInstructionMockResult(
+      has_selected_option ? &selected_option : nullptr, prompt_text));
+  DLOG(INFO) << "inline_ai: submit mock result ipc_id=" << ipc_id
+             << " prompt=" << wtou8(prompt_text)
+             << " commit=" << wtou8(commit_text);
+  _Respond(ipc_id, eat, commit_text.empty() ? nullptr : &commit_text);
   return true;
 }
 
@@ -6157,6 +8017,85 @@ void RimeWithWeaselHandler::_StartAIAssistantStreamRequest(
   }).detach();
 }
 
+void RimeWithWeaselHandler::_StartInlineInstructionRequest(
+    WeaselSessionId ipc_id,
+    uint64_t request_id,
+    const std::wstring& prompt_text) {
+  std::wstring full_context = _CollectAIAssistantContext(ipc_id, prompt_text);
+  if (!full_context.empty()) {
+    full_context.append(L"\n\n");
+  }
+  full_context.append(prompt_text);
+
+  HWND target_hwnd = nullptr;
+  AIAssistantConfig request_config = m_ai_config;
+  AIPanelInstitutionOption selected_option;
+  bool has_selected_option = false;
+  {
+    std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
+    const auto it = m_inline_instruction_states.find(ipc_id);
+    if (it != m_inline_instruction_states.end()) {
+      target_hwnd = it->second.target_hwnd;
+      has_selected_option = it->second.has_selected_option;
+      selected_option = it->second.selected_option;
+      if (it->second.has_selected_option &&
+          !it->second.selected_option.template_content.empty()) {
+        request_config.system_prompt =
+            wtou8(it->second.selected_option.template_content);
+      }
+    }
+  }
+
+  AppendAIAssistantContextDump(request_config, "inline_instruction", target_hwnd,
+                               full_context);
+  std::thread([this, request_config, ipc_id, request_id, prompt_text,
+               full_context, has_selected_option, selected_option]() {
+    std::wstring output_text;
+    std::string error_message;
+    bool ok = false;
+    if (request_config.endpoint.empty()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(350));
+      output_text = BuildInlineInstructionMockResult(
+          has_selected_option ? &selected_option : nullptr, prompt_text);
+      ok = !output_text.empty();
+    } else {
+      ok = InvokeAIAssistant(request_config, full_context, &output_text,
+                             &error_message);
+    }
+    bool should_write_back = false;
+    HWND writeback_hwnd = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
+      auto it = m_inline_instruction_states.find(ipc_id);
+      if (it == m_inline_instruction_states.end() ||
+          it->second.request_id != request_id) {
+        return;
+      }
+      it->second.has_error = !ok;
+      it->second.result_text = ok ? output_text : std::wstring();
+      it->second.error_text = ok ? std::wstring() : u8tow(error_message);
+      should_write_back = !it->second.session_alive &&
+                          it->second.detached_writeback &&
+                          ok && !output_text.empty();
+      writeback_hwnd = it->second.target_hwnd;
+      if (!it->second.session_alive) {
+        if (should_write_back) {
+          it->second.phase = InlineInstructionPhase::kIdle;
+        } else {
+          m_inline_instruction_states.erase(it);
+        }
+      }
+    }
+    if (should_write_back) {
+      if (_SendTextToTargetWindow(writeback_hwnd, output_text)) {
+        _AppendCommittedText(ipc_id, output_text);
+      }
+      std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
+      m_inline_instruction_states.erase(ipc_id);
+    }
+  }).detach();
+}
+
 bool RimeWithWeaselHandler::_SendTextToTargetWindow(
     HWND target_hwnd,
     const std::wstring& text) {
@@ -7294,10 +9233,26 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id,
 
   SessionStatus& session_status = get_session_status(ipc_id);
   RimeSessionId session_id = session_status.session_id;
+  wchar_t inline_prefix_char = L'/';
+  const std::wstring inline_prefix = u8tow(m_ai_config.inline_instruction_prefix);
+  if (inline_prefix.size() == 1) {
+    inline_prefix_char = inline_prefix[0];
+  }
   std::wstring commit_text;
   const std::wstring rime_commit = _TakePendingCommitText(session_id);
+  bool swallow_rime_commit = false;
+  {
+    std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
+    const auto it = m_inline_instruction_states.find(ipc_id);
+    swallow_rime_commit =
+        it != m_inline_instruction_states.end() &&
+        it->second.phase == InlineInstructionPhase::kEditing &&
+        it->second.slash_mode;
+  }
   if (!rime_commit.empty()) {
-    commit_text.append(rime_commit);
+    if (!swallow_rime_commit) {
+      commit_text.append(rime_commit);
+    }
   }
   if (extra_commit && !extra_commit->empty()) {
     commit_text.append(*extra_commit);
@@ -7314,12 +9269,19 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id,
   static const std::wstring Bool_wstring[] = {L"0", L"1"};
   if (rime_api->get_status(session_id, &status)) {
     is_composing = !!status.is_composing;
+    InlineInstructionState inline_state;
+    const bool has_inline_state = GetInlineInstructionSnapshot(
+        m_inline_instruction_mutex, m_inline_instruction_states, ipc_id,
+        &inline_state);
+    if (has_inline_state && inline_state.IsActive()) {
+      is_composing = true;
+    }
     actions.push_back("status");
     body.append(L"status.ascii_mode=")
         .append(Bool_wstring[!!status.is_ascii_mode])
         .append(L"\n")
         .append(L"status.composing=")
-        .append(Bool_wstring[!!status.is_composing])
+        .append(Bool_wstring[(int)is_composing])
         .append(L"\n")
         .append(L"status.disabled=")
         .append(Bool_wstring[!!status.is_disabled])
@@ -7344,12 +9306,52 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id,
 
   RIME_STRUCT(RimeContext, ctx);
   if (rime_api->get_context(session_id, &ctx)) {
-    bool has_candidates = ctx.menu.num_candidates > 0;
-    CandidateInfo cinfo;
-    if (has_candidates) {
-      _GetCandidateInfo(cinfo, ctx, ipc_id);
+    const char* input_text = rime_api->get_input(session_id);
+    InlineInstructionState inline_state;
+    const bool has_inline_state = GetInlineInstructionSnapshot(
+        m_inline_instruction_mutex, m_inline_instruction_states, ipc_id,
+        &inline_state);
+    const bool suppress_special_instruction_candidates =
+        has_inline_state && inline_state.IsActive() &&
+        input_text &&
+        (IsInstructionLookupInputText(input_text) ||
+         IsSystemCommandInputText(input_text));
+    if (suppress_special_instruction_candidates) {
+      std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+      m_ai_injected_candidates.erase(ipc_id);
     }
-    if (is_composing) {
+    bool has_candidates =
+        !suppress_special_instruction_candidates && ctx.menu.num_candidates > 0;
+    const bool should_try_instruction_lookup =
+        !suppress_special_instruction_candidates &&
+        input_text && IsInstructionLookupInputText(input_text);
+    CandidateInfo cinfo;
+    if (has_candidates || should_try_instruction_lookup) {
+      _GetCandidateInfo(cinfo, ctx, ipc_id);
+      has_candidates = !cinfo.candies.empty();
+    }
+    if (has_inline_state && inline_state.IsActive()) {
+      actions.push_back("ctx");
+      const std::wstring preedit_text =
+          inline_state.phase == InlineInstructionPhase::kRequesting
+              ? BuildInlineInstructionStatusText(inline_prefix_char,
+                                                 inline_state)
+              : BuildInlineInstructionEditingText(inline_prefix_char,
+                                                 inline_state);
+      const size_t cursor_pos =
+          GetInlineInstructionDisplayCursorPosition(inline_prefix_char,
+                                                   inline_state, preedit_text);
+      body.append(L"ctx.preedit=")
+          .append(escape_string(preedit_text))
+          .append(L"\n");
+      body.append(L"ctx.preedit.cursor=")
+          .append(std::to_wstring(cursor_pos))
+          .append(L",")
+          .append(std::to_wstring(cursor_pos))
+          .append(L",")
+          .append(std::to_wstring(cursor_pos))
+          .append(L"\n");
+    } else if (is_composing) {
       const auto& preedit = ctx.composition.preedit;
       const auto& start = ctx.composition.sel_start;
       const auto& end = ctx.composition.sel_end;
@@ -7439,7 +9441,7 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id,
         }
       }
     }
-    if (has_candidates) {
+    if (has_candidates || suppress_special_instruction_candidates) {
       std::wstringstream ss;
       boost::archive::text_woarchive oa(ss);
 
@@ -7455,6 +9457,15 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id,
   actions.push_back("config");
   body.append(L"config.inline_preedit=")
       .append(std::to_wstring((int)session_status.style.inline_preedit))
+      .append(L"\n");
+  InlineInstructionState inline_state;
+  const bool has_inline_state = GetInlineInstructionSnapshot(
+      m_inline_instruction_mutex, m_inline_instruction_states, ipc_id,
+      &inline_state);
+  body.append(L"config.inline_ai_requesting=")
+      .append(std::to_wstring((int)(has_inline_state &&
+                                    inline_state.phase ==
+                                        InlineInstructionPhase::kRequesting)))
       .append(L"\n");
 
   // style
@@ -7995,6 +10006,10 @@ void RimeWithWeaselHandler::_GetStatus(Status& stat,
                                        Context& ctx) {
   SessionStatus& session_status = get_session_status(ipc_id);
   RimeSessionId session_id = session_status.session_id;
+  InlineInstructionState inline_state;
+  const bool has_inline_state = GetInlineInstructionSnapshot(
+      m_inline_instruction_mutex, m_inline_instruction_states, ipc_id,
+      &inline_state);
   RIME_STRUCT(RimeStatus, status);
   if (rime_api->get_status(session_id, &status)) {
     std::string schema_id = "";
@@ -8003,7 +10018,8 @@ void RimeWithWeaselHandler::_GetStatus(Status& stat,
     stat.schema_name = u8tow(status.schema_name);
     stat.schema_id = u8tow(status.schema_id);
     stat.ascii_mode = !!status.is_ascii_mode;
-    stat.composing = !!status.is_composing;
+    stat.composing = !!status.is_composing || (has_inline_state &&
+                                               inline_state.IsActive());
     stat.disabled = !!status.is_disabled;
     stat.full_shape = !!status.is_full_shape;
     if (schema_id != m_last_schema_id) {
@@ -8034,9 +10050,42 @@ void RimeWithWeaselHandler::_GetStatus(Status& stat,
 void RimeWithWeaselHandler::_GetContext(Context& weasel_context,
                                         RimeSessionId session_id,
                                         WeaselSessionId ipc_id) {
+  InlineInstructionState inline_state;
+  const bool has_inline_state = GetInlineInstructionSnapshot(
+      m_inline_instruction_mutex, m_inline_instruction_states, ipc_id,
+      &inline_state);
+  wchar_t inline_prefix_char = L'/';
+  const std::wstring inline_prefix = u8tow(m_ai_config.inline_instruction_prefix);
+  if (inline_prefix.size() == 1) {
+    inline_prefix_char = inline_prefix[0];
+  }
   RIME_STRUCT(RimeContext, ctx);
   if (rime_api->get_context(session_id, &ctx)) {
-    if (ctx.composition.length > 0) {
+    const char* input_text = rime_api->get_input(session_id);
+    const bool suppress_special_instruction_candidates =
+        has_inline_state && inline_state.IsActive() &&
+        input_text &&
+        (IsInstructionLookupInputText(input_text) ||
+         IsSystemCommandInputText(input_text));
+    if (suppress_special_instruction_candidates) {
+      std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+      m_ai_injected_candidates.erase(ipc_id);
+    }
+    const bool should_try_instruction_lookup =
+        !suppress_special_instruction_candidates &&
+        input_text && IsInstructionLookupInputText(input_text);
+    if (has_inline_state && inline_state.IsActive()) {
+      weasel_context.preedit.str =
+          inline_state.phase == InlineInstructionPhase::kRequesting
+              ? BuildInlineInstructionStatusText(inline_prefix_char,
+                                                 inline_state)
+              : BuildInlineInstructionEditingText(inline_prefix_char,
+                                                 inline_state);
+      AddInlineInstructionCursorAttribute(
+          &weasel_context.preedit,
+          GetInlineInstructionDisplayCursorPosition(
+              inline_prefix_char, inline_state, weasel_context.preedit.str));
+    } else if (ctx.composition.length > 0) {
       weasel_context.preedit.str = u8tow(ctx.composition.preedit);
       if (ctx.composition.sel_start < ctx.composition.sel_end) {
         TextAttribute attr;
@@ -8049,7 +10098,8 @@ void RimeWithWeaselHandler::_GetContext(Context& weasel_context,
         weasel_context.preedit.attributes.push_back(attr);
       }
     }
-    if (ctx.menu.num_candidates) {
+    if ((!suppress_special_instruction_candidates && ctx.menu.num_candidates) ||
+        should_try_instruction_lookup) {
       CandidateInfo& cinfo(weasel_context.cinfo);
       _GetCandidateInfo(cinfo, ctx, ipc_id);
     }

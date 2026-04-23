@@ -164,6 +164,13 @@ class WeaselTSF : public ITfTextInputProcessorEx,
   BOOL _InitThreadFocusSink();
   void _UninitThreadFocusSink();
   DWORD _dwThreadFocusSinkCookie;
+  static VOID CALLBACK _InlineAiPollTimerProc(HWND hwnd,
+                                              UINT uMsg,
+                                              UINT_PTR idEvent,
+                                              DWORD dwTime);
+  void _ScheduleInlineAiSync();
+  void _CancelInlineAiSync();
+  bool _SyncInlineAiState();
 
   BOOL _InitTextEditSink(com_ptr<ITfDocumentMgr> pDocMgr);
 
@@ -234,4 +241,5 @@ class WeaselTSF : public ITfTextInputProcessorEx,
   BOOL _committed = false;
   BOOL _isToOpenClose = false;
   bool _aborting_composition = false;
+  UINT_PTR _inlineAiPollTimer = 0;
 };

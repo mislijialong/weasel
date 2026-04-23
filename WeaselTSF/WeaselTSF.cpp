@@ -19,6 +19,12 @@ static void error_message(const WCHAR* msg) {
   }
 }
 
+namespace {
+void InlineAiTsfDebug(const std::wstring& message) {
+  OutputDebugStringW((L"inline_ai_tsf: " + message + L"\n").c_str());
+}
+}  // namespace
+
 WeaselTSF::WeaselTSF() {
   _cRef = 1;
 
@@ -38,6 +44,7 @@ WeaselTSF::WeaselTSF() {
 }
 
 WeaselTSF::~WeaselTSF() {
+  _CancelInlineAiSync();
   DllRelease();
 }
 
@@ -96,6 +103,7 @@ STDAPI WeaselTSF::Activate(ITfThreadMgr* pThreadMgr, TfClientId tfClientId) {
 }
 
 STDAPI WeaselTSF::Deactivate() {
+  _CancelInlineAiSync();
   m_client.EndSession();
 
   _InitTextEditSink(com_ptr<ITfDocumentMgr>());
@@ -118,6 +126,87 @@ STDAPI WeaselTSF::Deactivate() {
   _cand->DestroyAll();
 
   return S_OK;
+}
+
+VOID CALLBACK WeaselTSF::_InlineAiPollTimerProc(_In_ HWND hwnd,
+                                                _In_ UINT uMsg,
+                                                _In_ UINT_PTR idEvent,
+                                                _In_ DWORD dwTime) {
+  WeaselTSF* self = reinterpret_cast<WeaselTSF*>(idEvent);
+  if (!self) {
+    return;
+  }
+  if (!self->_SyncInlineAiState()) {
+    self->_CancelInlineAiSync();
+  }
+}
+
+void WeaselTSF::_ScheduleInlineAiSync() {
+  if (_inlineAiPollTimer != 0) {
+    return;
+  }
+  _inlineAiPollTimer = reinterpret_cast<UINT_PTR>(this);
+  SetTimer(nullptr, _inlineAiPollTimer, 120, &WeaselTSF::_InlineAiPollTimerProc);
+}
+
+void WeaselTSF::_CancelInlineAiSync() {
+  if (_inlineAiPollTimer == 0) {
+    return;
+  }
+  KillTimer(nullptr, _inlineAiPollTimer);
+  _inlineAiPollTimer = 0;
+}
+
+bool WeaselTSF::_SyncInlineAiState() {
+  if (!_pEditSessionContext) {
+    return false;
+  }
+  if (!m_client.Echo()) {
+    return false;
+  }
+  if (!m_client.SyncSession()) {
+    return false;
+  }
+  weasel::Config config;
+  auto context = std::make_shared<weasel::Context>();
+  std::wstring commit;
+  weasel::ResponseParser parser(&commit, context.get(), &_status, &config,
+                                &_cand->style());
+  const bool ok = m_client.GetResponseData(std::ref(parser));
+  if (!ok) {
+    InlineAiTsfDebug(L"sync_session response missing");
+    return false;
+  }
+  InlineAiTsfDebug(L"sync_session ok composing=" +
+                   std::to_wstring(_status.composing) +
+                   L" inline_preedit=" +
+                   std::to_wstring(config.inline_preedit) +
+                   L" inline_ai_requesting=" +
+                   std::to_wstring(config.inline_ai_requesting) +
+                   L" preedit=" + context->preedit.str +
+                   L" commit=" + commit);
+  _UpdateLanguageBar(_status);
+  if (!commit.empty()) {
+    if (!_IsComposing()) {
+      _StartComposition(_pEditSessionContext,
+                        _fCUASWorkaroundEnabled && !config.inline_preedit);
+    }
+    _InsertText(_pEditSessionContext, commit);
+    _EndComposition(_pEditSessionContext, false);
+    _committed = TRUE;
+  }
+  if (_status.composing && !_IsComposing()) {
+    _StartComposition(_pEditSessionContext,
+                      _fCUASWorkaroundEnabled && !config.inline_preedit);
+  } else if (!_status.composing && _IsComposing()) {
+    _EndComposition(_pEditSessionContext, true);
+  }
+  if (_IsComposing() && config.inline_preedit) {
+    _ShowInlinePreedit(_pEditSessionContext, context);
+  }
+  _UpdateCompositionWindow(_pEditSessionContext);
+  _UpdateUI(*context, _status);
+  return config.inline_ai_requesting;
 }
 
 STDAPI WeaselTSF::ActivateEx(ITfThreadMgr* pThreadMgr,

@@ -26,18 +26,20 @@ std::wstring NormalizeInstructionName(const std::wstring& text) {
 const std::vector<AIPanelInstitutionOption>& BuiltinAIAssistantInstructions() {
   static const std::vector<AIPanelInstitutionOption> kOptions = {
       AIPanelInstitutionOption(
-          L"mock-system-notepad", L"打开记事本", std::wstring(),
-          std::wstring(),
+          L"mock-system-notepad", L"打开记事本", L"jsb notepad",
+          std::wstring(), std::wstring(),
           AIAssistantInstructionAction::kExecuteSystemCommand, L"notepad"),
       AIPanelInstitutionOption(
-          L"mock-system-calendar", L"打开日历", std::wstring(), std::wstring(),
+          L"mock-system-calendar", L"打开日历", L"rl rili calendar",
+          std::wstring(), std::wstring(),
           AIAssistantInstructionAction::kExecuteSystemCommand, L"rili"),
       AIPanelInstitutionOption(
-          L"mock-system-browser", L"打开浏览器", std::wstring(),
-          std::wstring(),
+          L"mock-system-browser", L"打开浏览器", L"llq kb browser",
+          std::wstring(), std::wstring(),
           AIAssistantInstructionAction::kExecuteSystemCommand, L"kb"),
       AIPanelInstitutionOption(
-          L"mock-system-calc", L"打开计算器", std::wstring(), std::wstring(),
+          L"mock-system-calc", L"打开计算器", L"jsq calc",
+          std::wstring(), std::wstring(),
           AIAssistantInstructionAction::kExecuteSystemCommand, L"calc")};
   return kOptions;
 }
@@ -70,6 +72,10 @@ bool IsBuiltinAIAssistantInstructionId(const std::wstring& id) {
     }
   }
   return false;
+}
+
+std::vector<AIPanelInstitutionOption> SnapshotBuiltinAIAssistantInstructions() {
+  return BuiltinAIAssistantInstructions();
 }
 
 void AIAssistantInstructions::Clear() {
