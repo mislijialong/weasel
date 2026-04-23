@@ -49,7 +49,6 @@ typedef DWORD WeaselSessionId;
 struct AIAssistantConfig {
   AIAssistantConfig()
       : enabled(false),
-        stream(true),
         login_required(false),
         debug_dump_context(false),
         inline_instruction_enabled(true),
@@ -57,15 +56,10 @@ struct AIAssistantConfig {
         trigger_binding('3', ibus::CONTROL_MASK),
         inline_instruction_prefix("/"),
         instruction_lookup_prefix("sS"),
-        endpoint(),
         ai_api_base(),
-        api_key(),
-        model("gpt-5"),
         debug_dump_path("ai_context_dump.txt"),
         panel_url(),
         panel_allowed_origin(),
-        system_prompt(),
-        reasoning_effort("low"),
         login_url(),
         login_state_path("ai_login_state.json"),
         login_token_key("token"),
@@ -78,7 +72,6 @@ struct AIAssistantConfig {
         max_history_chars(2048),
         timeout_ms(30000) {}
   bool enabled;
-  bool stream;
   bool login_required;
   bool debug_dump_context;
   bool inline_instruction_enabled;
@@ -86,15 +79,10 @@ struct AIAssistantConfig {
   AiHotkeyBinding trigger_binding;
   std::string inline_instruction_prefix;
   std::string instruction_lookup_prefix;
-  std::string endpoint;
   std::string ai_api_base;
-  std::string api_key;
-  std::string model;
   std::string debug_dump_path;
   std::string panel_url;
   std::string panel_allowed_origin;
-  std::string system_prompt;
-  std::string reasoning_effort;
   std::string login_url;
   std::string login_state_path;
   std::string login_token_key;
@@ -116,11 +104,9 @@ struct AIPanelRuntime {
         webview_hwnd(nullptr),
         webview_controller(nullptr),
         webview(nullptr),
-        request_hwnd(nullptr),
         confirm_hwnd(nullptr),
         cancel_hwnd(nullptr),
         target_hwnd(nullptr),
-        request_id(0),
         ipc_id(0),
         context_text(),
         status_text(),
@@ -152,11 +138,9 @@ struct AIPanelRuntime {
   HWND webview_hwnd;
   void* webview_controller;
   void* webview;
-  HWND request_hwnd;
   HWND confirm_hwnd;
   HWND cancel_hwnd;
   HWND target_hwnd;
-  uint64_t request_id;
   WeaselSessionId ipc_id;
   std::wstring context_text;
   std::wstring status_text;
@@ -367,7 +351,6 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   bool _EnsureAIPanelWindow();
   bool _OpenAIPanel(WeaselSessionId ipc_id,
                     HWND target_hwnd,
-                    uint64_t request_id,
                     const std::vector<AIPanelInstitutionOption>* initial_options =
                         nullptr,
                     bool institutions_ready = false,
@@ -380,7 +363,6 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   void _AppendAIPanelOutput(const std::wstring& chunk);
   void _CompleteAIPanel(bool has_error, const std::wstring& error_text);
   void _ResizeAIPanelWebView();
-  void _RequestAIPanelGeneration();
   void _ConfirmAIPanelOutput();
   void _CancelAIPanelOutput();
   void _ExecuteAIPanelSystemCommand(const std::wstring& command_id);
@@ -391,8 +373,6 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   void _ApplyAIPanelSizeAndReposition(int requested_width,
                                       int requested_height,
                                       bool prefer_anchor_position = false);
-  void _StartAIAssistantStreamRequest(uint64_t request_id,
-                                      const std::wstring& context_text);
   void _StartInlineInstructionRequest(WeaselSessionId ipc_id,
                                       uint64_t request_id,
                                       const std::wstring& prompt_text);

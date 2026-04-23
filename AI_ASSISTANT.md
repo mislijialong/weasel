@@ -1,54 +1,89 @@
-## AI Assistant (Remote React Panel)
+## AI Assistant
 
-当前实现为「Host 负责触发与状态同步，React 面板负责流式请求」。
+当前代码里，AI 相关能力分成两条主线：
 
-### 行为
+### 1. React 面板链路
 
-- 按 `ai_assistant.trigger_hotkey` 触发面板（默认 `Ctrl + 3`）。
-- 若当前有未上屏 preedit，会先上屏，避免内容丢失。
-- Host 只负责：
-  - 收集上下文（输入法历史 + 当前预编辑）
-  - 处理登录态与 token/tenantId/refreshToken
-  - 接收面板确认回写并写回目标输入框
-- AI 流式请求在 React 面板内完成（Host 不再发起主请求）。
+- 按 `ai_assistant.trigger_hotkey` 打开远端 React 面板，默认 `Control+3`。
+- Host 负责：
+  - 收集输入上下文
+  - 维护登录态、`token`、`tenantId`、用户信息缓存
+  - 拉取 AI 指令/机构列表
+  - 接收前端确认后的回写文本
+- 主请求由前端面板自己发起，Host 不再直连旧的 `endpoint`。
 
-### `weasel.yaml` 配置示例
+### 2. TSF 内联 AI 链路
+
+- 输入 `ai_assistant.instruction_lookup_prefix`（默认 `sS`）后，走动态 AI 指令检索。
+- 选中某个 AI 指令后，进入 TSF 内联 preedit。
+- 内联前缀会带上指令名，例如 `【续写】，`。
+- 内联提交后，Host 会调用：
+  - `ai_assistant.ai_api_base + "/chat-messages"`
+  - `Authorization: Bearer {指令 appKey}`
+  - `inputs.Token = 登录 token`
+  - `inputs.tenantid = 当前 tenantId`
+  - `user = 用户信息里的 id`
+  - `query = 内联录入内容`
+- 接口按流式返回时，内容直接上屏；结束后退出内联状态。
+
+### 当前配置示例
 
 ```yaml
 ai_assistant:
   enabled: true
-  trigger_hotkey: "Control+3"
+
+  trigger_hotkey: "ctrl+3"
   instruction_lookup_prefix: "sS"
+  inline_instruction_enabled: true
+  inline_instruction_prefix: "/"
+
+  ai_api_base: "https://copilot.sino-bridge.com:90/v1"
+
   login_required: true
-  debug_dump_context: false
-  debug_dump_path: "ai_context_dump.txt"
-
-  panel_url: "https://copilot.sino-bridge.com/toolbox/#/rime-with-weasel"
-  panel_allowed_origin: "https://copilot.sino-bridge.com"
-
-  login_url: "https://copilot.sino-bridge.com/copilot-web-app/login?uuid={uuid}&fromType=plugIn&operationType=login"
+  login_url: "https://copilot.sino-bridge.com:85?uuid={uuid}&fromType=plugIn&operationType=login"
   login_state_path: "ai_login_state.json"
   login_token_key: "token"
-  refresh_token_endpoint: "https://copilot.sino-bridge.com/api/oauth/anyTenant/refresh"
-  mqtt_url: "wss://copilot.sino-bridge.com/mqtt"
+  refresh_token_endpoint: ""
+  mqtt_url: "wss://copilot.sino-bridge.com:85/mqttSocket/mqtt"
   mqtt_topic_template: "/mqtt/topic/sino/lamp/oauth/token/login/{uuid}"
   mqtt_username: ""
   mqtt_password: ""
   mqtt_timeout_ms: 120000
 
+  panel_url: "https://copilot.sino-bridge.com/toolbox/#/rime-with-weasel"
+  panel_allowed_origin: "https://copilot.sino-bridge.com"
+
   max_history_chars: 2048
   timeout_ms: 30000
+
+  debug_dump_context: true
+  debug_dump_path: "ai_context_dump.txt"
 ```
 
-说明：
+### 配置说明
 
-- `trigger_hotkey` 可配置触发快捷键，默认 `Control+3`。
-- `instruction_lookup_prefix` 可配置 `sS` 这类 AI 指令检索前缀，默认 `sS`。
-- `panel_url` 必填，触发快捷键命中时会直接 `Navigate(panel_url)`。
-- `panel_allowed_origin` 为空时，会从 `panel_url` 自动推导 origin。
-- Host 到 React 的 token/tenantId/上下文通过 `postMessage` 发送，不走 URL 参数。
+- `enabled`：AI 总开关。
+- `trigger_hotkey`：打开 React 面板的快捷键。
+- `instruction_lookup_prefix`：AI 指令检索前缀，当前 `sS` 这条链路会进入“候选词选指令”。
+- `inline_instruction_enabled`：是否启用 TSF 内联 AI。
+- `inline_instruction_prefix`：内联显示前缀字符，默认 `/`；当前主要用于 preedit 展示，不是主要入口。
+- `ai_api_base`：内联 AI 请求基地址，提交时会拼成 `/chat-messages`。
+- `login_required` / `login_url` / `login_state_path` / `login_token_key`：登录流程相关配置。
+- `refresh_token_endpoint`：刷新 token 接口；留空时会根据登录地址推导候选刷新地址。
+- `mqtt_*`：扫码登录/消息通知相关配置。
+- `panel_url`：React 面板地址。
+- `panel_allowed_origin`：允许和 Host 通信的前端源；为空时会从 `panel_url` 推导。
+- `max_history_chars`：收集上下文时保留的最大历史字符数。
+- `timeout_ms`：网络请求超时，登录、用户信息、机构列表、内联 AI 都会用到。
+- `debug_dump_context` / `debug_dump_path`：是否把上下文落盘，便于联调。
 
-### 消息协议
+### 登录与缓存
+
+- 登录成功后，身份信息和用户信息会落盘缓存。
+- 重启电脑后缓存仍保留。
+- 当相关接口返回 `401` 时，会清理失效状态并触发重新登录。
+
+### Panel 消息协议
 
 Host -> Panel（WebView `message` 事件）：
 
@@ -78,12 +113,21 @@ Host -> Panel（WebView `message` 事件）：
 Panel -> Host（`window.chrome.webview.postMessage(...)`）：
 
 - `ui.ready`
-- `ui.context.changed`，payload: `{ "text": "..." }`
-- `ui.select.institution`，payload: `{ "id": "..." }`
-- `ui.writeback.confirm`，payload: `{ "text": "最终确认回写文本" }`
+- `ui.context.changed`
+- `ui.select.institution`
+- `ui.writeback.confirm`
 - `ui.cancel`
 - `ui.drag.start`
+- `ui.panel.resize`
 - `ui.auth.refresh_request`
+- `ui.request`
+- `ui.confirm`
+- `ui.system_command`
+
+说明：
+
+- `ui.request` 现在只用于把上下文/状态同步给 Host，真正的面板请求仍由前端自己完成。
+- `ui.writeback.confirm` 才会把最终文本回写到目标输入框。
 
 ### React 端最小对接
 
@@ -100,7 +144,7 @@ window.chrome?.webview?.addEventListener("message", (event: any) => {
 })
 ```
 
-发送命令给 Host：
+发送回写：
 
 ```ts
 window.chrome?.webview?.postMessage(JSON.stringify({
@@ -109,7 +153,17 @@ window.chrome?.webview?.postMessage(JSON.stringify({
 }))
 ```
 
+### 已下线配置
+
+下面这些旧 Host 直连生成配置已经下线，不要再配置：
+
+- `ai_assistant/stream`
+- `ai_assistant/endpoint`
+- `ai_assistant/api_key`
+- `ai_assistant/model`
+- `ai_assistant/reasoning_effort`
+
 ### 已知限制
 
-- Rime 仍无法直接读取任意应用内“已存在全文”；上下文基于输入法可观测内容重建。
-- 焦点切换时按 app 维度隔离上下文，避免跨应用串内容。
+- Rime 仍无法直接读取任意应用里“已经存在的全文”，上下文只能基于输入法可观测内容重建。
+- 内联 AI 期间会屏蔽再次触发 AI 指令和系统指令候选，避免冲突。

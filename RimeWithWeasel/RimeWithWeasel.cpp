@@ -133,12 +133,8 @@ constexpr int kAIPanelButtonWidth = 96;
 constexpr int kAIPanelButtonHeight = 30;
 constexpr UINT kAIPanelControlStatus = 4101;
 constexpr UINT kAIPanelControlOutput = 4102;
-constexpr UINT kAIPanelControlRequest = 4103;
 constexpr UINT kAIPanelControlConfirm = 4104;
 constexpr UINT kAIPanelControlCancel = 4105;
-constexpr UINT WM_AI_STREAM_APPEND = WM_APP + 401;
-constexpr UINT WM_AI_STREAM_DONE = WM_APP + 402;
-constexpr UINT WM_AI_STREAM_ERROR = WM_APP + 403;
 constexpr UINT WM_AI_WEBVIEW_INIT = WM_APP + 404;
 constexpr UINT WM_AI_PANEL_DESTROY = WM_APP + 405;
 constexpr UINT WM_AI_WEBVIEW_SYNC = WM_APP + 406;
@@ -149,9 +145,6 @@ constexpr UINT kWMNcuahDrawFrame = 0x00AF;
 constexpr int kAIPanelResizeEdgeNone = 0;
 constexpr int kAIPanelResizeEdgeRight = 1;
 constexpr int kAIPanelResizeEdgeBottom = 2;
-constexpr char kDefaultAIAssistantPrompt[] =
-    "Continue the user's existing text. Reply with continuation only, with no "
-    "explanation, no markdown, and no quotation marks.";
 constexpr wchar_t kSystemCommandCommitPrefix[] = L"__weasel_syscmd__:";
 constexpr char kDefaultSystemCommandInputPrefix[] = "sc";
 constexpr char kDefaultInstructionLookupInputPrefix[] = "sS";
@@ -159,16 +152,6 @@ constexpr const char* kAllowedSystemCommandIds[] = {
     "jsq",       "calc",     "notepad",   "mspaint", "explorer",
     "txt",       "md",       "gh",        "bd",      "wb",
     "g",         "yt",       "rili",      "calendar", "cal", "kb"};
-struct AIPanelTextMessage {
-  uint64_t request_id = 0;
-  std::wstring text;
-};
-
-struct AIPanelDoneMessage {
-  uint64_t request_id = 0;
-  bool has_error = false;
-  std::wstring text;
-};
 
 struct AIPanelUiCommand {
   std::string type;
@@ -1146,7 +1129,6 @@ void LayoutAIPanelControls(HWND hwnd) {
   }
   HWND status_hwnd = GetDlgItem(hwnd, kAIPanelControlStatus);
   HWND output_hwnd = GetDlgItem(hwnd, kAIPanelControlOutput);
-  HWND request_hwnd = GetDlgItem(hwnd, kAIPanelControlRequest);
   HWND confirm_hwnd = GetDlgItem(hwnd, kAIPanelControlConfirm);
   HWND cancel_hwnd = GetDlgItem(hwnd, kAIPanelControlCancel);
   if (!output_hwnd) {
@@ -1159,8 +1141,8 @@ void LayoutAIPanelControls(HWND hwnd) {
   const int content_height =
       max(1, client_height - kAIPanelResizeHitBand);
   const bool hide_native_header_footer =
-      status_hwnd && request_hwnd && confirm_hwnd && cancel_hwnd &&
-      !IsWindowVisible(status_hwnd) && !IsWindowVisible(request_hwnd) &&
+      status_hwnd && confirm_hwnd && cancel_hwnd &&
+      !IsWindowVisible(status_hwnd) &&
       !IsWindowVisible(confirm_hwnd) && !IsWindowVisible(cancel_hwnd);
   if (hide_native_header_footer) {
     MoveWindow(output_hwnd, kAIPanelPadding, kAIPanelPadding,
@@ -1179,7 +1161,6 @@ void LayoutAIPanelControls(HWND hwnd) {
   const int cancel_x =
       content_width - kAIPanelPadding - kAIPanelButtonWidth;
   const int confirm_x = cancel_x - button_gap - kAIPanelButtonWidth;
-  const int request_x = confirm_x - button_gap - kAIPanelButtonWidth;
 
   if (status_hwnd) {
     MoveWindow(status_hwnd, kAIPanelPadding, kAIPanelPadding,
@@ -1187,10 +1168,6 @@ void LayoutAIPanelControls(HWND hwnd) {
   }
   MoveWindow(output_hwnd, kAIPanelPadding, output_top,
              content_width - kAIPanelPadding * 2, output_height, TRUE);
-  if (request_hwnd) {
-    MoveWindow(request_hwnd, request_x, button_y, kAIPanelButtonWidth,
-               kAIPanelButtonHeight, TRUE);
-  }
   if (confirm_hwnd) {
     MoveWindow(confirm_hwnd, confirm_x, button_y, kAIPanelButtonWidth,
                kAIPanelButtonHeight, TRUE);
@@ -1334,13 +1311,6 @@ std::string EscapeJsonString(const std::string& input) {
   return escaped;
 }
 
-std::string BuildAIAssistantUserInput(const std::wstring& context_text) {
-  std::string prompt =
-      "Context:\n" + wtou8(context_text) +
-      "\n\nContinue writing from the end of that context.";
-  return prompt;
-}
-
 std::wstring BuildInlineInstructionMockResult(
     const AIPanelInstitutionOption* option,
     const std::wstring& prompt_text) {
@@ -1359,33 +1329,6 @@ std::wstring BuildInlineInstructionMockResult(
   }
   return L"【模拟返回】已触发「" + instruction_name + L"」，收到内容："
          + display_prompt + L"。这里先返回一段 mock 文本用于联调。";
-}
-
-std::string BuildAIAssistantRequestBody(const AIAssistantConfig& config,
-                                        const std::wstring& context_text,
-                                        bool stream) {
-  const std::string system_prompt =
-      config.system_prompt.empty() ? kDefaultAIAssistantPrompt
-                                   : config.system_prompt;
-  std::string body;
-  body.reserve(1024 + context_text.size() * 3);
-  body += "{\"model\":\"";
-  body += EscapeJsonString(config.model);
-  body += "\"";
-  if (!config.reasoning_effort.empty()) {
-    body += ",\"reasoning\":{\"effort\":\"";
-    body += EscapeJsonString(config.reasoning_effort);
-    body += "\"}";
-  }
-  body += ",\"input\":[";
-  body += "{\"role\":\"system\",\"content\":[{\"type\":\"input_text\",\"text\":\"";
-  body += EscapeJsonString(system_prompt);
-  body += "\"}]},";
-  body += "{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"";
-  body += EscapeJsonString(BuildAIAssistantUserInput(context_text));
-  body += "\"}]}";
-  body += stream ? "],\"stream\":true}" : "],\"stream\":false}";
-  return body;
 }
 
 std::string BuildInlineInstructionChatRequestBody(
@@ -1524,154 +1467,6 @@ bool ParseAIAssistantResponse(const std::string& response_body,
   return true;
 }
 
-bool InvokeAIAssistant(const AIAssistantConfig& config,
-                       const std::wstring& context_text,
-                       std::wstring* output_text,
-                       std::string* error_message) {
-  if (config.endpoint.empty()) {
-    if (error_message) {
-      *error_message = "AI endpoint is empty.";
-    }
-    return false;
-  }
-
-  std::wstring endpoint = u8tow(config.endpoint);
-  URL_COMPONENTS parts = {0};
-  parts.dwStructSize = sizeof(parts);
-  parts.dwSchemeLength = static_cast<DWORD>(-1);
-  parts.dwHostNameLength = static_cast<DWORD>(-1);
-  parts.dwUrlPathLength = static_cast<DWORD>(-1);
-  parts.dwExtraInfoLength = static_cast<DWORD>(-1);
-  if (!WinHttpCrackUrl(endpoint.c_str(), 0, 0, &parts)) {
-    if (error_message) {
-      *error_message = "Unable to parse AI endpoint URL.";
-    }
-    return false;
-  }
-
-  const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
-  std::wstring object_name =
-      parts.dwUrlPathLength > 0
-          ? std::wstring(parts.lpszUrlPath, parts.dwUrlPathLength)
-          : std::wstring(L"/");
-  if (parts.dwExtraInfoLength > 0) {
-    object_name.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
-  }
-
-  ScopedWinHttpHandle session(
-      WinHttpOpen(L"WeaselAIAssistant/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                  WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
-  if (!session.valid()) {
-    if (error_message) {
-      *error_message = "WinHTTP session creation failed.";
-    }
-    return false;
-  }
-  WinHttpSetTimeouts(session.get(), config.timeout_ms, config.timeout_ms,
-                     config.timeout_ms, config.timeout_ms);
-
-  ScopedWinHttpHandle connection(
-      WinHttpConnect(session.get(), host.c_str(), parts.nPort, 0));
-  if (!connection.valid()) {
-    if (error_message) {
-      *error_message = "WinHTTP connection failed.";
-    }
-    return false;
-  }
-
-  const DWORD request_flags =
-      parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0;
-  ScopedWinHttpHandle request(
-      WinHttpOpenRequest(connection.get(), L"POST", object_name.c_str(), NULL,
-                         WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-                         request_flags));
-  if (!request.valid()) {
-    if (error_message) {
-      *error_message = "WinHTTP request creation failed.";
-    }
-    return false;
-  }
-
-  std::wstring headers =
-      L"Content-Type: application/json\r\nAccept: application/json\r\n";
-  if (!config.api_key.empty()) {
-    headers += L"Authorization: Bearer ";
-    headers += u8tow(config.api_key);
-    headers += L"\r\n";
-  }
-  WinHttpAddRequestHeaders(request.get(), headers.c_str(),
-                           static_cast<DWORD>(-1),
-                           WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
-
-  std::string request_body =
-      BuildAIAssistantRequestBody(config, context_text, false);
-  if (!WinHttpSendRequest(request.get(), WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                          request_body.empty()
-                              ? WINHTTP_NO_REQUEST_DATA
-                              : (LPVOID)request_body.data(),
-                          static_cast<DWORD>(request_body.size()),
-                          static_cast<DWORD>(request_body.size()), 0) ||
-      !WinHttpReceiveResponse(request.get(), nullptr)) {
-    if (error_message) {
-      *error_message = "Sending the AI request failed.";
-    }
-    return false;
-  }
-
-  DWORD status_code = 0;
-  DWORD status_code_size = sizeof(status_code);
-  WinHttpQueryHeaders(request.get(),
-                      WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                      WINHTTP_HEADER_NAME_BY_INDEX, &status_code,
-                      &status_code_size, WINHTTP_NO_HEADER_INDEX);
-
-  std::string response_body;
-  for (;;) {
-    DWORD available = 0;
-    if (!WinHttpQueryDataAvailable(request.get(), &available)) {
-      if (error_message) {
-        *error_message = "Failed to read the AI response.";
-      }
-      return false;
-    }
-    if (available == 0) {
-      break;
-    }
-    std::string chunk(available, '\0');
-    DWORD downloaded = 0;
-    if (!WinHttpReadData(request.get(), chunk.data(), available, &downloaded)) {
-      if (error_message) {
-        *error_message = "Failed while downloading the AI response.";
-      }
-      return false;
-    }
-    chunk.resize(downloaded);
-    response_body += chunk;
-  }
-
-  std::string parsed_error;
-  if (status_code < 200 || status_code >= 300) {
-    if (!ParseAIAssistantResponse(response_body, nullptr, &parsed_error) ||
-        parsed_error.empty()) {
-      parsed_error = "AI request returned HTTP " + std::to_string(status_code) +
-                     ".";
-    }
-    if (error_message) {
-      *error_message = parsed_error;
-    }
-    return false;
-  }
-
-  if (!ParseAIAssistantResponse(response_body, output_text, &parsed_error)) {
-    if (error_message) {
-      *error_message = parsed_error;
-    }
-    return false;
-  }
-
-  return true;
-}
-
 bool ParseAIAssistantStreamEvent(const std::string& event_json,
                                  std::wstring* delta_text,
                                  bool* is_complete) {
@@ -1741,248 +1536,6 @@ bool ParseAIAssistantStreamEvent(const std::string& event_json,
 
   if (!delta_utf8.empty() && delta_text) {
     *delta_text = u8tow(delta_utf8);
-  }
-  return true;
-}
-
-bool InvokeAIAssistantStream(
-    const AIAssistantConfig& config,
-    const std::wstring& context_text,
-    const std::function<void(const std::wstring&)>& on_delta,
-    std::string* error_message) {
-  if (config.endpoint.empty()) {
-    if (error_message) {
-      *error_message = "AI endpoint is empty.";
-    }
-    return false;
-  }
-
-  std::wstring endpoint = u8tow(config.endpoint);
-  URL_COMPONENTS parts = {0};
-  parts.dwStructSize = sizeof(parts);
-  parts.dwSchemeLength = static_cast<DWORD>(-1);
-  parts.dwHostNameLength = static_cast<DWORD>(-1);
-  parts.dwUrlPathLength = static_cast<DWORD>(-1);
-  parts.dwExtraInfoLength = static_cast<DWORD>(-1);
-  if (!WinHttpCrackUrl(endpoint.c_str(), 0, 0, &parts)) {
-    if (error_message) {
-      *error_message = "Unable to parse AI endpoint URL.";
-    }
-    return false;
-  }
-
-  const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
-  std::wstring object_name =
-      parts.dwUrlPathLength > 0
-          ? std::wstring(parts.lpszUrlPath, parts.dwUrlPathLength)
-          : std::wstring(L"/");
-  if (parts.dwExtraInfoLength > 0) {
-    object_name.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
-  }
-
-  ScopedWinHttpHandle session(
-      WinHttpOpen(L"WeaselAIAssistant/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                  WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
-  if (!session.valid()) {
-    if (error_message) {
-      *error_message = "WinHTTP session creation failed.";
-    }
-    return false;
-  }
-  WinHttpSetTimeouts(session.get(), config.timeout_ms, config.timeout_ms,
-                     config.timeout_ms, config.timeout_ms);
-
-  ScopedWinHttpHandle connection(
-      WinHttpConnect(session.get(), host.c_str(), parts.nPort, 0));
-  if (!connection.valid()) {
-    if (error_message) {
-      *error_message = "WinHTTP connection failed.";
-    }
-    return false;
-  }
-
-  const DWORD request_flags =
-      parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0;
-  ScopedWinHttpHandle request(
-      WinHttpOpenRequest(connection.get(), L"POST", object_name.c_str(), NULL,
-                         WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-                         request_flags));
-  if (!request.valid()) {
-    if (error_message) {
-      *error_message = "WinHTTP request creation failed.";
-    }
-    return false;
-  }
-
-  std::wstring headers = config.stream
-                             ? L"Content-Type: application/json\r\nAccept: "
-                               L"text/event-stream\r\n"
-                             : L"Content-Type: application/json\r\nAccept: "
-                               L"application/json\r\n";
-  if (!config.api_key.empty()) {
-    headers += L"Authorization: Bearer ";
-    headers += u8tow(config.api_key);
-    headers += L"\r\n";
-  }
-  WinHttpAddRequestHeaders(request.get(), headers.c_str(),
-                           static_cast<DWORD>(-1),
-                           WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
-
-  std::string request_body =
-      BuildAIAssistantRequestBody(config, context_text, config.stream);
-  if (!WinHttpSendRequest(request.get(), WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                          request_body.empty()
-                              ? WINHTTP_NO_REQUEST_DATA
-                              : (LPVOID)request_body.data(),
-                          static_cast<DWORD>(request_body.size()),
-                          static_cast<DWORD>(request_body.size()), 0) ||
-      !WinHttpReceiveResponse(request.get(), nullptr)) {
-    if (error_message) {
-      *error_message = "Sending the AI request failed.";
-    }
-    return false;
-  }
-
-  DWORD status_code = 0;
-  DWORD status_code_size = sizeof(status_code);
-  WinHttpQueryHeaders(request.get(),
-                      WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                      WINHTTP_HEADER_NAME_BY_INDEX, &status_code,
-                      &status_code_size, WINHTTP_NO_HEADER_INDEX);
-
-  std::string body;
-  body.reserve(2048);
-  std::string line_buffer;
-  std::string event_payload;
-  line_buffer.reserve(1024);
-  bool saw_stream_frame = false;
-  const bool should_parse_stream =
-      config.stream && status_code >= 200 && status_code < 300;
-
-  const auto flush_event_payload = [&](const std::string& payload) -> bool {
-    if (payload.empty()) {
-      return true;
-    }
-    saw_stream_frame = true;
-    if (payload == "[DONE]") {
-      return true;
-    }
-    std::wstring delta;
-    if (!ParseAIAssistantStreamEvent(payload, &delta, nullptr)) {
-      return false;
-    }
-    if (!delta.empty() && on_delta) {
-      on_delta(delta);
-    }
-    return true;
-  };
-
-  const auto append_data_line = [&](const std::string& line) {
-    std::string data_part = line.substr(5);
-    size_t trim_index = 0;
-    while (trim_index < data_part.size() &&
-           std::isspace(static_cast<unsigned char>(data_part[trim_index]))) {
-      ++trim_index;
-    }
-    if (trim_index > 0) {
-      data_part.erase(0, trim_index);
-    }
-    if (!event_payload.empty()) {
-      event_payload.push_back('\n');
-    }
-    event_payload += data_part;
-  };
-
-  for (;;) {
-    DWORD available = 0;
-    if (!WinHttpQueryDataAvailable(request.get(), &available)) {
-      if (error_message) {
-        *error_message = "Failed to read the AI response.";
-      }
-      return false;
-    }
-    if (available == 0) {
-      break;
-    }
-    std::string chunk(available, '\0');
-    DWORD downloaded = 0;
-    if (!WinHttpReadData(request.get(), chunk.data(), available, &downloaded)) {
-      if (error_message) {
-        *error_message = "Failed while downloading the AI response.";
-      }
-      return false;
-    }
-    chunk.resize(downloaded);
-    body += chunk;
-
-    if (!should_parse_stream) {
-      continue;
-    }
-
-    for (char ch : chunk) {
-      if (ch == '\r') {
-        continue;
-      }
-      if (ch != '\n') {
-        line_buffer.push_back(ch);
-        continue;
-      }
-
-      if (line_buffer.empty()) {
-        if (!event_payload.empty()) {
-          if (!flush_event_payload(event_payload)) {
-            if (error_message) {
-              *error_message = "AI stream event payload is invalid.";
-            }
-            return false;
-          }
-          event_payload.clear();
-        }
-      } else if (line_buffer.rfind("data:", 0) == 0) {
-        append_data_line(line_buffer);
-      }
-      line_buffer.clear();
-    }
-  }
-
-  if (should_parse_stream) {
-    if (!line_buffer.empty() && line_buffer.rfind("data:", 0) == 0) {
-      append_data_line(line_buffer);
-    }
-    if (!event_payload.empty() && !flush_event_payload(event_payload)) {
-      if (error_message) {
-        *error_message = "AI stream tail payload is invalid.";
-      }
-      return false;
-    }
-  }
-
-  std::string parsed_error;
-  if (status_code < 200 || status_code >= 300) {
-    if (!ParseAIAssistantResponse(body, nullptr, &parsed_error) ||
-        parsed_error.empty()) {
-      parsed_error = "AI request returned HTTP " + std::to_string(status_code) +
-                     ".";
-    }
-    if (error_message) {
-      *error_message = parsed_error;
-    }
-    return false;
-  }
-
-  if (should_parse_stream && saw_stream_frame) {
-    return true;
-  }
-
-  std::wstring output_text;
-  if (!ParseAIAssistantResponse(body, &output_text, &parsed_error)) {
-    if (error_message) {
-      *error_message = parsed_error;
-    }
-    return false;
-  }
-  if (!output_text.empty() && on_delta) {
-    on_delta(output_text);
   }
   return true;
 }
@@ -6259,7 +5812,7 @@ bool RimeWithWeaselHandler::_OpenAIPanelForInstruction(
     return true;
   }
 
-  if (!_OpenAIPanel(ipc_id, target_hwnd, 0, &options, options_ready,
+  if (!_OpenAIPanel(ipc_id, target_hwnd, &options, options_ready,
                     option.id)) {
     return true;
   }
@@ -6348,10 +5901,6 @@ void RimeWithWeaselHandler::_LoadAIAssistantConfig(RimeConfig* config) {
   if (rime_api->config_get_bool(config, "ai_assistant/enabled", &enabled)) {
     m_ai_config.enabled = !!enabled;
   }
-  Bool stream = True;
-  if (rime_api->config_get_bool(config, "ai_assistant/stream", &stream)) {
-    m_ai_config.stream = !!stream;
-  }
   Bool login_required = False;
   if (rime_api->config_get_bool(config, "ai_assistant/login_required",
                                 &login_required)) {
@@ -6374,20 +5923,13 @@ void RimeWithWeaselHandler::_LoadAIAssistantConfig(RimeConfig* config) {
                    &m_ai_config.inline_instruction_prefix);
   ReadConfigString(config, "ai_assistant/instruction_lookup_prefix",
                    &m_ai_config.instruction_lookup_prefix);
-  ReadConfigString(config, "ai_assistant/endpoint", &m_ai_config.endpoint);
   ReadConfigString(config, "ai_assistant/ai_api_base",
                    &m_ai_config.ai_api_base);
-  ReadConfigString(config, "ai_assistant/api_key", &m_ai_config.api_key);
-  ReadConfigString(config, "ai_assistant/model", &m_ai_config.model);
   ReadConfigString(config, "ai_assistant/debug_dump_path",
                    &m_ai_config.debug_dump_path);
   ReadConfigString(config, "ai_assistant/panel_url", &m_ai_config.panel_url);
   ReadConfigString(config, "ai_assistant/panel_allowed_origin",
                    &m_ai_config.panel_allowed_origin);
-  ReadConfigString(config, "ai_assistant/system_prompt",
-                   &m_ai_config.system_prompt);
-  ReadConfigString(config, "ai_assistant/reasoning_effort",
-                   &m_ai_config.reasoning_effort);
   ReadConfigString(config, "ai_assistant/login_url", &m_ai_config.login_url);
   ReadConfigString(config, "ai_assistant/login_state_path",
                    &m_ai_config.login_state_path);
@@ -6408,12 +5950,6 @@ void RimeWithWeaselHandler::_LoadAIAssistantConfig(RimeConfig* config) {
   ReadConfigInt(config, "ai_assistant/mqtt_timeout_ms",
                 &m_ai_config.mqtt_timeout_ms);
 
-  if (m_ai_config.model.empty()) {
-    m_ai_config.model = "gpt-5";
-  }
-  if (m_ai_config.reasoning_effort.empty()) {
-    m_ai_config.reasoning_effort = "low";
-  }
   if (m_ai_config.trigger_hotkey.empty()) {
     m_ai_config.trigger_hotkey = "Control+3";
   }
@@ -7094,7 +6630,7 @@ bool RimeWithWeaselHandler::_TryProcessAIAssistantTrigger(KeyEvent keyEvent,
     return true;
   }
 
-  if (_OpenAIPanel(ipc_id, target_hwnd, 0, &preloaded_institution_options,
+  if (_OpenAIPanel(ipc_id, target_hwnd, &preloaded_institution_options,
                    institution_options_ready)) {
     const std::wstring normalized_prompt_context =
         NormalizeReferencedContextText(prompt_context);
@@ -7567,11 +7103,6 @@ bool RimeWithWeaselHandler::_EnsureAIPanelWindow() {
         0, 0, 0, 0, panel_hwnd,
         reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kAIPanelControlOutput)),
         instance, nullptr);
-    HWND request_hwnd = CreateWindowExW(
-        0, L"BUTTON", L"请求", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0,
-        0, panel_hwnd,
-        reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kAIPanelControlRequest)),
-        instance, nullptr);
     HWND confirm_hwnd = CreateWindowExW(
         0, L"BUTTON", L"确认回写", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 0,
         0, 0, 0, panel_hwnd,
@@ -7581,8 +7112,7 @@ bool RimeWithWeaselHandler::_EnsureAIPanelWindow() {
         0, L"BUTTON", L"取消", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, panel_hwnd,
         reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kAIPanelControlCancel)),
         instance, nullptr);
-    if (!status_hwnd || !output_hwnd || !request_hwnd || !confirm_hwnd ||
-        !cancel_hwnd) {
+    if (!status_hwnd || !output_hwnd || !confirm_hwnd || !cancel_hwnd) {
       DestroyWindow(panel_hwnd);
       SetEvent(ready_event);
       if (should_uninitialize_com) {
@@ -7597,16 +7127,12 @@ bool RimeWithWeaselHandler::_EnsureAIPanelWindow() {
                  reinterpret_cast<WPARAM>(default_font), TRUE);
     SendMessageW(output_hwnd, WM_SETFONT,
                  reinterpret_cast<WPARAM>(default_font), TRUE);
-    SendMessageW(request_hwnd, WM_SETFONT,
-                 reinterpret_cast<WPARAM>(default_font), TRUE);
     SendMessageW(confirm_hwnd, WM_SETFONT,
                  reinterpret_cast<WPARAM>(default_font), TRUE);
     SendMessageW(cancel_hwnd, WM_SETFONT,
                  reinterpret_cast<WPARAM>(default_font), TRUE);
-    EnableWindow(request_hwnd, FALSE);
     EnableWindow(confirm_hwnd, FALSE);
     ShowWindow(status_hwnd, SW_HIDE);
-    ShowWindow(request_hwnd, SW_HIDE);
     ShowWindow(confirm_hwnd, SW_HIDE);
     ShowWindow(cancel_hwnd, SW_HIDE);
     ShowWindow(panel_hwnd, SW_HIDE);
@@ -7620,7 +7146,6 @@ bool RimeWithWeaselHandler::_EnsureAIPanelWindow() {
       m_ai_panel.webview_hwnd = panel_hwnd;
       m_ai_panel.webview_controller = nullptr;
       m_ai_panel.webview = nullptr;
-      m_ai_panel.request_hwnd = request_hwnd;
       m_ai_panel.confirm_hwnd = confirm_hwnd;
       m_ai_panel.cancel_hwnd = cancel_hwnd;
       m_ai_panel.context_text.clear();
@@ -7669,7 +7194,6 @@ bool RimeWithWeaselHandler::_EnsureAIPanelWindow() {
         m_ai_panel.webview_hwnd = nullptr;
         m_ai_panel.webview_controller = nullptr;
         m_ai_panel.webview = nullptr;
-        m_ai_panel.request_hwnd = nullptr;
         m_ai_panel.confirm_hwnd = nullptr;
         m_ai_panel.cancel_hwnd = nullptr;
         m_ai_panel.target_hwnd = nullptr;
@@ -7850,7 +7374,6 @@ void RimeWithWeaselHandler::_ApplyAIPanelSizeAndReposition(
 
 bool RimeWithWeaselHandler::_OpenAIPanel(WeaselSessionId ipc_id,
                                          HWND target_hwnd,
-                                         uint64_t request_id,
                                          const std::vector<AIPanelInstitutionOption>* initial_options,
                                          bool institutions_ready,
                                          const std::wstring& initial_selected_institution_id) {
@@ -7861,7 +7384,6 @@ bool RimeWithWeaselHandler::_OpenAIPanel(WeaselSessionId ipc_id,
   HWND panel_hwnd = nullptr;
   HWND status_hwnd = nullptr;
   HWND output_hwnd = nullptr;
-  HWND request_hwnd = nullptr;
   HWND confirm_hwnd = nullptr;
   HWND cancel_hwnd = nullptr;
   {
@@ -7870,7 +7392,6 @@ bool RimeWithWeaselHandler::_OpenAIPanel(WeaselSessionId ipc_id,
       return false;
     }
     m_ai_panel.ipc_id = ipc_id;
-    m_ai_panel.request_id = request_id;
     m_ai_panel.target_hwnd = target_hwnd;
     if (m_ai_panel.target_hwnd == m_ai_panel.panel_hwnd ||
         !IsWindow(m_ai_panel.target_hwnd)) {
@@ -7895,14 +7416,12 @@ bool RimeWithWeaselHandler::_OpenAIPanel(WeaselSessionId ipc_id,
     panel_hwnd = m_ai_panel.panel_hwnd;
     status_hwnd = m_ai_panel.status_hwnd;
     output_hwnd = m_ai_panel.output_hwnd;
-    request_hwnd = m_ai_panel.request_hwnd;
     confirm_hwnd = m_ai_panel.confirm_hwnd;
     cancel_hwnd = m_ai_panel.cancel_hwnd;
   }
 
   SetWindowTextW(status_hwnd, L"上下文已就绪，请在前端面板中发起请求。");
   SetWindowTextW(output_hwnd, L"");
-  EnableWindow(request_hwnd, TRUE);
   EnableWindow(confirm_hwnd, FALSE);
   EnableWindow(cancel_hwnd, TRUE);
   SetWindowTextW(cancel_hwnd, L"取消");
@@ -7927,7 +7446,6 @@ void RimeWithWeaselHandler::_CloseAIPanel() {
     std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
     panel_hwnd = m_ai_panel.panel_hwnd;
     m_ai_panel.target_hwnd = nullptr;
-    m_ai_panel.request_id = 0;
     m_ai_panel.ipc_id = 0;
     m_ai_panel.focus_pending = false;
     m_ai_panel.status_text.clear();
@@ -7982,7 +7500,6 @@ void RimeWithWeaselHandler::_SetAIPanelStatus(const std::wstring& status_text) {
 
 void RimeWithWeaselHandler::_ResetAIPanelOutput() {
   HWND output_hwnd = nullptr;
-  HWND request_hwnd = nullptr;
   HWND confirm_hwnd = nullptr;
   HWND cancel_hwnd = nullptr;
   HWND panel_hwnd = nullptr;
@@ -7993,16 +7510,12 @@ void RimeWithWeaselHandler::_ResetAIPanelOutput() {
     m_ai_panel.completed = false;
     m_ai_panel.has_error = false;
     output_hwnd = m_ai_panel.output_hwnd;
-    request_hwnd = m_ai_panel.request_hwnd;
     confirm_hwnd = m_ai_panel.confirm_hwnd;
     cancel_hwnd = m_ai_panel.cancel_hwnd;
     panel_hwnd = m_ai_panel.panel_hwnd;
   }
   if (output_hwnd && IsWindow(output_hwnd)) {
     SetWindowTextW(output_hwnd, L"");
-  }
-  if (request_hwnd && IsWindow(request_hwnd)) {
-    EnableWindow(request_hwnd, TRUE);
   }
   if (confirm_hwnd && IsWindow(confirm_hwnd)) {
     EnableWindow(confirm_hwnd, FALSE);
@@ -8050,7 +7563,6 @@ void RimeWithWeaselHandler::_CompleteAIPanel(bool has_error,
   }
 
   HWND status_hwnd = nullptr;
-  HWND request_hwnd = nullptr;
   HWND confirm_hwnd = nullptr;
   HWND cancel_hwnd = nullptr;
   bool has_output = false;
@@ -8060,23 +7572,19 @@ void RimeWithWeaselHandler::_CompleteAIPanel(bool has_error,
     m_ai_panel.completed = true;
     m_ai_panel.has_error = has_error;
     m_ai_panel.status_text =
-        has_error ? L"生成失败，可重试。" : L"生成完成，点击确认回写。";
+        has_error ? L"操作失败。" : L"生成完成，点击确认回写。";
     status_hwnd = m_ai_panel.status_hwnd;
-    request_hwnd = m_ai_panel.request_hwnd;
     confirm_hwnd = m_ai_panel.confirm_hwnd;
     cancel_hwnd = m_ai_panel.cancel_hwnd;
     has_output = !m_ai_panel.output_text.empty();
   }
 
   if (status_hwnd && IsWindow(status_hwnd)) {
-    SetWindowTextW(status_hwnd, has_error ? L"生成失败，可重试。"
+    SetWindowTextW(status_hwnd, has_error ? L"操作失败。"
                                           : L"生成完成，点击确认回写。");
   }
   if (confirm_hwnd && IsWindow(confirm_hwnd)) {
     EnableWindow(confirm_hwnd, !has_error && has_output);
-  }
-  if (request_hwnd && IsWindow(request_hwnd)) {
-    EnableWindow(request_hwnd, TRUE);
   }
   if (cancel_hwnd && IsWindow(cancel_hwnd)) {
     SetWindowTextW(cancel_hwnd, has_error ? L"关闭" : L"取消");
@@ -8122,108 +7630,6 @@ void RimeWithWeaselHandler::_ResizeAIPanelWebView() {
   controller->put_Bounds(output_rect);
   controller->Release();
 #endif
-}
-
-void RimeWithWeaselHandler::_RequestAIPanelGeneration() {
-  HWND status_hwnd = nullptr;
-  HWND output_hwnd = nullptr;
-  HWND request_hwnd = nullptr;
-  HWND confirm_hwnd = nullptr;
-  HWND cancel_hwnd = nullptr;
-  HWND panel_hwnd = nullptr;
-  std::wstring context_text;
-  std::wstring status_text;
-  uint64_t request_id = 0;
-  bool should_start = false;
-
-  {
-    std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
-    if (!m_ai_panel.panel_hwnd || !IsWindow(m_ai_panel.panel_hwnd)) {
-      return;
-    }
-    if (m_ai_panel.requesting) {
-      return;
-    }
-
-    status_hwnd = m_ai_panel.status_hwnd;
-    output_hwnd = m_ai_panel.output_hwnd;
-    request_hwnd = m_ai_panel.request_hwnd;
-    confirm_hwnd = m_ai_panel.confirm_hwnd;
-    cancel_hwnd = m_ai_panel.cancel_hwnd;
-    panel_hwnd = m_ai_panel.panel_hwnd;
-    context_text = m_ai_panel.context_text;
-  }
-
-  if (status_text.empty()) {
-    if (context_text.empty()) {
-      status_text = L"上下文为空，无法发起请求。";
-    } else if (m_ai_config.endpoint.empty()) {
-      status_text = L"AI 接口未配置，请先设置 endpoint。";
-    }
-  }
-
-  {
-    std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
-    if (!m_ai_panel.panel_hwnd || !IsWindow(m_ai_panel.panel_hwnd) ||
-        m_ai_panel.requesting) {
-      return;
-    }
-    status_hwnd = m_ai_panel.status_hwnd;
-    output_hwnd = m_ai_panel.output_hwnd;
-    request_hwnd = m_ai_panel.request_hwnd;
-    confirm_hwnd = m_ai_panel.confirm_hwnd;
-    cancel_hwnd = m_ai_panel.cancel_hwnd;
-    panel_hwnd = m_ai_panel.panel_hwnd;
-
-    if (!status_text.empty()) {
-      m_ai_panel.status_text = status_text;
-    } else {
-      m_ai_panel.requesting = true;
-      m_ai_panel.completed = false;
-      m_ai_panel.has_error = false;
-      m_ai_panel.output_text.clear();
-      m_ai_panel.status_text = L"正在生成...";
-      request_id = ++m_ai_request_seq;
-      m_ai_panel.request_id = request_id;
-      should_start = true;
-    }
-  }
-
-  if (!should_start) {
-    if (status_hwnd && IsWindow(status_hwnd)) {
-      std::wstring status_text;
-      {
-        std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
-        status_text = m_ai_panel.status_text;
-      }
-      SetWindowTextW(status_hwnd, status_text.c_str());
-    }
-    if (panel_hwnd && IsWindow(panel_hwnd)) {
-      PostMessageW(panel_hwnd, WM_AI_WEBVIEW_SYNC, 0, 0);
-    }
-    return;
-  }
-
-  if (status_hwnd && IsWindow(status_hwnd)) {
-    SetWindowTextW(status_hwnd, L"正在生成...");
-  }
-  if (output_hwnd && IsWindow(output_hwnd)) {
-    SetWindowTextW(output_hwnd, L"");
-  }
-  if (request_hwnd && IsWindow(request_hwnd)) {
-    EnableWindow(request_hwnd, FALSE);
-  }
-  if (confirm_hwnd && IsWindow(confirm_hwnd)) {
-    EnableWindow(confirm_hwnd, FALSE);
-  }
-  if (cancel_hwnd && IsWindow(cancel_hwnd)) {
-    EnableWindow(cancel_hwnd, TRUE);
-    SetWindowTextW(cancel_hwnd, L"取消");
-  }
-  if (panel_hwnd && IsWindow(panel_hwnd)) {
-    PostMessageW(panel_hwnd, WM_AI_WEBVIEW_SYNC, 0, 0);
-  }
-  _StartAIAssistantStreamRequest(request_id, context_text);
 }
 
 void RimeWithWeaselHandler::_ConfirmAIPanelOutput() {
@@ -8519,50 +7925,6 @@ void RimeWithWeaselHandler::_SetAIPanelInstitutionSelection(
   if (panel_hwnd && IsWindow(panel_hwnd)) {
     PostMessageW(panel_hwnd, WM_AI_WEBVIEW_SYNC, 0, 0);
   }
-}
-
-void RimeWithWeaselHandler::_StartAIAssistantStreamRequest(
-    uint64_t request_id,
-    const std::wstring& context_text) {
-  HWND panel_hwnd = nullptr;
-  {
-    std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
-    panel_hwnd = m_ai_panel.panel_hwnd;
-  }
-  if (!panel_hwnd || !IsWindow(panel_hwnd)) {
-    return;
-  }
-
-  const AIAssistantConfig request_config = m_ai_config;
-  std::thread([request_config, request_id, context_text, panel_hwnd]() {
-    const auto post_chunk = [panel_hwnd, request_id](const std::wstring& chunk) {
-      if (chunk.empty()) {
-        return;
-      }
-      AIPanelTextMessage* message = new AIPanelTextMessage();
-      message->request_id = request_id;
-      message->text = chunk;
-      if (!PostMessageW(panel_hwnd, WM_AI_STREAM_APPEND, 0,
-                        reinterpret_cast<LPARAM>(message))) {
-        delete message;
-      }
-    };
-
-    std::string error_message;
-    const bool ok = InvokeAIAssistantStream(request_config, context_text,
-                                            post_chunk, &error_message);
-    AIPanelDoneMessage* done = new AIPanelDoneMessage();
-    done->request_id = request_id;
-    done->has_error = !ok;
-    if (!ok && !error_message.empty()) {
-      done->text = u8tow(error_message);
-    }
-    const UINT done_message = ok ? WM_AI_STREAM_DONE : WM_AI_STREAM_ERROR;
-    if (!PostMessageW(panel_hwnd, done_message, 0,
-                      reinterpret_cast<LPARAM>(done))) {
-      delete done;
-    }
-  }).detach();
 }
 
 void RimeWithWeaselHandler::_StartInlineInstructionRequest(
@@ -8951,11 +8313,6 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
     case WM_COMMAND:
       if (!self) {
         break;
-      }
-      if (HIWORD(wParam) == BN_CLICKED &&
-          LOWORD(wParam) == kAIPanelControlRequest) {
-        self->_RequestAIPanelGeneration();
-        return 0;
       }
       if (HIWORD(wParam) == BN_CLICKED &&
           LOWORD(wParam) == kAIPanelControlConfirm) {
@@ -9422,45 +8779,6 @@ LRESULT CALLBACK RimeWithWeaselHandler::AIAssistantPanelWndProc(
         }
       }
 #endif
-      return 0;
-    }
-    case WM_AI_STREAM_APPEND: {
-      AIPanelTextMessage* message =
-          reinterpret_cast<AIPanelTextMessage*>(lParam);
-      if (!message || !self) {
-        delete message;
-        return 0;
-      }
-      bool is_latest_request = false;
-      {
-        std::lock_guard<std::mutex> lock(self->m_ai_panel_mutex);
-        is_latest_request = self->m_ai_panel.panel_hwnd == hwnd &&
-                            self->m_ai_panel.request_id == message->request_id;
-      }
-      if (is_latest_request) {
-        self->_AppendAIPanelOutput(message->text);
-      }
-      delete message;
-      return 0;
-    }
-    case WM_AI_STREAM_DONE:
-    case WM_AI_STREAM_ERROR: {
-      AIPanelDoneMessage* message =
-          reinterpret_cast<AIPanelDoneMessage*>(lParam);
-      if (!message || !self) {
-        delete message;
-        return 0;
-      }
-      bool is_latest_request = false;
-      {
-        std::lock_guard<std::mutex> lock(self->m_ai_panel_mutex);
-        is_latest_request = self->m_ai_panel.panel_hwnd == hwnd &&
-                            self->m_ai_panel.request_id == message->request_id;
-      }
-      if (is_latest_request) {
-        self->_CompleteAIPanel(msg == WM_AI_STREAM_ERROR, message->text);
-      }
-      delete message;
       return 0;
     }
     default:
