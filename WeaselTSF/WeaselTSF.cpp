@@ -20,6 +20,8 @@ static void error_message(const WCHAR* msg) {
 }
 
 namespace {
+constexpr UINT kInlineAiPollIntervalMs = 40;
+
 void InlineAiTsfDebug(const std::wstring& message) {
   OutputDebugStringW((L"inline_ai_tsf: " + message + L"\n").c_str());
 }
@@ -146,7 +148,8 @@ void WeaselTSF::_ScheduleInlineAiSync() {
     return;
   }
   _inlineAiPollTimer = reinterpret_cast<UINT_PTR>(this);
-  SetTimer(nullptr, _inlineAiPollTimer, 120, &WeaselTSF::_InlineAiPollTimerProc);
+  SetTimer(nullptr, _inlineAiPollTimer, kInlineAiPollIntervalMs,
+           &WeaselTSF::_InlineAiPollTimerProc);
 }
 
 void WeaselTSF::_CancelInlineAiSync() {

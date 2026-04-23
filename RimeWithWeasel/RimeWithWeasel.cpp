@@ -7128,7 +7128,50 @@ bool RimeWithWeaselHandler::_TryHandleInlineInstructionKey(
     }
   }
   if (!editing_active) {
-    return false;
+    bool requesting_active = false;
+    bool finalize_request = false;
+    bool has_error = false;
+    bool streamed_writeback = false;
+    std::wstring commit_text;
+    std::wstring error_text;
+    {
+      std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
+      auto it = m_inline_instruction_states.find(ipc_id);
+      if (it == m_inline_instruction_states.end() ||
+          it->second.phase != InlineInstructionPhase::kRequesting) {
+        return false;
+      }
+      requesting_active = true;
+      if (it->second.request_completed || it->second.has_error ||
+          !it->second.result_text.empty()) {
+        finalize_request = true;
+        has_error = it->second.has_error;
+        commit_text = it->second.result_text;
+        error_text = it->second.error_text;
+        streamed_writeback = it->second.streamed_writeback;
+        m_inline_instruction_states.erase(it);
+      }
+    }
+
+    if (!requesting_active) {
+      return false;
+    }
+
+    if (finalize_request) {
+      if (has_error) {
+        if (!error_text.empty()) {
+          LOG(WARNING) << "Inline AI request failed: " << wtou8(error_text);
+        }
+        _Respond(ipc_id, eat);
+      } else if (!streamed_writeback && !commit_text.empty()) {
+        _Respond(ipc_id, eat, &commit_text);
+      } else {
+        _Respond(ipc_id, eat);
+      }
+    } else {
+      _Respond(ipc_id, eat);
+    }
+    return true;
   }
 
   const InlineInstructionPromptSnapshot prompt_snapshot =
