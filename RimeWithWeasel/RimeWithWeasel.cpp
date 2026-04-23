@@ -152,6 +152,8 @@ constexpr int kAIPanelResizeEdgeBottom = 2;
 constexpr char kDefaultAIAssistantPrompt[] =
     "Continue the user's existing text. Reply with continuation only, with no "
     "explanation, no markdown, and no quotation marks.";
+constexpr wchar_t kInlineInstructionChatEndpoint[] =
+    L"https://copilot.sino-bridge.com:90/v1/chat-messages";
 constexpr wchar_t kSystemCommandCommitPrefix[] = L"__weasel_syscmd__:";
 constexpr char kDefaultSystemCommandInputPrefix[] = "sc";
 constexpr char kInstructionLookupInputPrefix[] = "sS";
@@ -1370,6 +1372,34 @@ std::string BuildAIAssistantRequestBody(const AIAssistantConfig& config,
   return body;
 }
 
+std::string BuildInlineInstructionChatRequestBody(
+    const std::wstring& query_text,
+    const std::string& token,
+    const std::string& tenant_id,
+    const std::string& user_id) {
+  const std::string query_utf8 = wtou8(TrimInlineInstructionPrompt(query_text));
+  const std::string normalized_user_id =
+      user_id.empty() ? "anonymous" : user_id;
+  std::string body;
+  body.reserve(512 + query_utf8.size() * 4);
+  body += "{\"inputs\":{";
+  body += "\"personalLibs\":\"\",";
+  body += "\"knGroupIds\":\"\",";
+  body += "\"knIds\":\"\",";
+  body += "\"Token\":\"";
+  body += EscapeJsonString(token);
+  body += "\",\"tenantid\":\"";
+  body += EscapeJsonString(tenant_id);
+  body += "\",\"query\":\"";
+  body += EscapeJsonString(query_utf8);
+  body += "\"},\"files\":[],\"user\":\"";
+  body += EscapeJsonString(normalized_user_id);
+  body += "\",\"query\":\"";
+  body += EscapeJsonString(query_utf8);
+  body += "\",\"response_mode\":\"streaming\",\"conversation_id\":\"\"}";
+  return body;
+}
+
 void AppendResponseText(const rapidjson::Value& value, std::string* text) {
   if (!text) {
     return;
@@ -1941,6 +1971,358 @@ bool InvokeAIAssistantStream(
   return true;
 }
 
+bool InvokeInlineInstructionChatStream(
+    const AIAssistantConfig& config,
+    const AIPanelInstitutionOption& option,
+    const std::wstring& query_text,
+    const std::string& token,
+    const std::string& tenant_id,
+    const std::string& user_id,
+    const std::function<void(const std::wstring&)>& on_delta,
+    std::string* error_message,
+    int* http_status_code = nullptr) {
+  if (http_status_code) {
+    *http_status_code = 0;
+  }
+  if (option.app_key.empty()) {
+    if (error_message) {
+      *error_message = "Inline AI instruction appKey is empty.";
+    }
+    return false;
+  }
+
+  const auto is_auth_failure_code = [](int code) -> bool {
+    switch (code) {
+      case 401:
+      case 11001:
+      case 11011:
+      case 11012:
+      case 11013:
+      case 11014:
+      case 11015:
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  const auto read_response_metadata = [](const std::string& response_body,
+                                         int* code,
+                                         std::string* message) {
+    if (code) {
+      *code = 200;
+    }
+    if (message) {
+      message->clear();
+    }
+
+    rapidjson::Document document;
+    document.Parse(response_body.c_str(), response_body.size());
+    if (document.HasParseError() || !document.IsObject()) {
+      return;
+    }
+
+    const auto code_it = document.FindMember("code");
+    if (code_it != document.MemberEnd()) {
+      int parsed_code = 200;
+      if (code_it->value.IsInt()) {
+        parsed_code = code_it->value.GetInt();
+      } else if (code_it->value.IsUint()) {
+        parsed_code = static_cast<int>(code_it->value.GetUint());
+      } else if (code_it->value.IsInt64()) {
+        parsed_code = static_cast<int>(code_it->value.GetInt64());
+      } else if (code_it->value.IsUint64()) {
+        parsed_code = static_cast<int>(code_it->value.GetUint64());
+      } else if (code_it->value.IsString()) {
+        parsed_code = std::atoi(code_it->value.GetString());
+      }
+      if (code) {
+        *code = parsed_code;
+      }
+    }
+
+    if (!message) {
+      return;
+    }
+
+    const char* message_keys[] = {"msg", "message", "errorMsg", "error",
+                                  "detail"};
+    for (const char* key : message_keys) {
+      const auto message_it = document.FindMember(key);
+      if (message_it == document.MemberEnd()) {
+        continue;
+      }
+      if (message_it->value.IsString()) {
+        *message = message_it->value.GetString();
+        return;
+      }
+      if (message_it->value.IsObject()) {
+        const auto nested_message =
+            message_it->value.FindMember("message");
+        if (nested_message != message_it->value.MemberEnd() &&
+            nested_message->value.IsString()) {
+          *message = nested_message->value.GetString();
+          return;
+        }
+      }
+    }
+  };
+
+  const std::wstring endpoint = kInlineInstructionChatEndpoint;
+  URL_COMPONENTS parts = {0};
+  parts.dwStructSize = sizeof(parts);
+  parts.dwSchemeLength = static_cast<DWORD>(-1);
+  parts.dwHostNameLength = static_cast<DWORD>(-1);
+  parts.dwUrlPathLength = static_cast<DWORD>(-1);
+  parts.dwExtraInfoLength = static_cast<DWORD>(-1);
+  if (!WinHttpCrackUrl(endpoint.c_str(), 0, 0, &parts)) {
+    if (error_message) {
+      *error_message = "Unable to parse inline AI endpoint URL.";
+    }
+    return false;
+  }
+
+  const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
+  std::wstring object_name =
+      parts.dwUrlPathLength > 0
+          ? std::wstring(parts.lpszUrlPath, parts.dwUrlPathLength)
+          : std::wstring(L"/");
+  if (parts.dwExtraInfoLength > 0) {
+    object_name.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
+  }
+
+  ScopedWinHttpHandle session(
+      WinHttpOpen(L"WeaselInlineInstruction/1.0",
+                  WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
+                  WINHTTP_NO_PROXY_BYPASS, 0));
+  if (!session.valid()) {
+    if (error_message) {
+      *error_message = "WinHTTP session creation failed.";
+    }
+    return false;
+  }
+  WinHttpSetTimeouts(session.get(), config.timeout_ms, config.timeout_ms,
+                     config.timeout_ms, config.timeout_ms);
+
+  ScopedWinHttpHandle connection(
+      WinHttpConnect(session.get(), host.c_str(), parts.nPort, 0));
+  if (!connection.valid()) {
+    if (error_message) {
+      *error_message = "WinHTTP connection failed.";
+    }
+    return false;
+  }
+
+  const DWORD request_flags =
+      parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0;
+  ScopedWinHttpHandle request(
+      WinHttpOpenRequest(connection.get(), L"POST", object_name.c_str(),
+                         nullptr, WINHTTP_NO_REFERER,
+                         WINHTTP_DEFAULT_ACCEPT_TYPES, request_flags));
+  if (!request.valid()) {
+    if (error_message) {
+      *error_message = "WinHTTP request creation failed.";
+    }
+    return false;
+  }
+
+  std::wstring headers =
+      L"Content-Type: application/json\r\nAccept: text/event-stream\r\n";
+  headers += L"Authorization: Bearer ";
+  headers += option.app_key;
+  headers += L"\r\n";
+  WinHttpAddRequestHeaders(request.get(), headers.c_str(),
+                           static_cast<DWORD>(-1),
+                           WINHTTP_ADDREQ_FLAG_ADD |
+                               WINHTTP_ADDREQ_FLAG_REPLACE);
+
+  const std::string request_body = BuildInlineInstructionChatRequestBody(
+      query_text, token, tenant_id, user_id);
+  if (!WinHttpSendRequest(request.get(), WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                          request_body.empty()
+                              ? WINHTTP_NO_REQUEST_DATA
+                              : const_cast<char*>(request_body.data()),
+                          static_cast<DWORD>(request_body.size()),
+                          static_cast<DWORD>(request_body.size()), 0) ||
+      !WinHttpReceiveResponse(request.get(), nullptr)) {
+    if (error_message) {
+      *error_message = "Sending inline AI request failed.";
+    }
+    return false;
+  }
+
+  DWORD status_code = 0;
+  DWORD status_code_size = sizeof(status_code);
+  WinHttpQueryHeaders(request.get(),
+                      WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                      WINHTTP_HEADER_NAME_BY_INDEX, &status_code,
+                      &status_code_size, WINHTTP_NO_HEADER_INDEX);
+  if (http_status_code) {
+    *http_status_code = static_cast<int>(status_code);
+  }
+
+  std::string body;
+  body.reserve(2048);
+  std::string line_buffer;
+  std::string event_payload;
+  bool saw_stream_frame = false;
+  const bool should_parse_stream =
+      status_code >= 200 && status_code < 300;
+
+  const auto flush_event_payload = [&](const std::string& payload) -> bool {
+    if (payload.empty()) {
+      return true;
+    }
+    saw_stream_frame = true;
+    if (payload == "[DONE]") {
+      return true;
+    }
+    std::wstring delta;
+    bool is_complete = false;
+    if (!ParseAIAssistantStreamEvent(payload, &delta, &is_complete)) {
+      return false;
+    }
+    if (!delta.empty() && on_delta) {
+      on_delta(delta);
+    }
+    return true;
+  };
+
+  const auto append_data_line = [&](const std::string& line) {
+    std::string data_part = line.substr(5);
+    size_t trim_index = 0;
+    while (trim_index < data_part.size() &&
+           std::isspace(static_cast<unsigned char>(data_part[trim_index]))) {
+      ++trim_index;
+    }
+    if (trim_index > 0) {
+      data_part.erase(0, trim_index);
+    }
+    if (!event_payload.empty()) {
+      event_payload.push_back('\n');
+    }
+    event_payload += data_part;
+  };
+
+  for (;;) {
+    DWORD available = 0;
+    if (!WinHttpQueryDataAvailable(request.get(), &available)) {
+      if (error_message) {
+        *error_message = "Failed to read inline AI response.";
+      }
+      return false;
+    }
+    if (available == 0) {
+      break;
+    }
+    std::string chunk(available, '\0');
+    DWORD downloaded = 0;
+    if (!WinHttpReadData(request.get(), chunk.data(), available,
+                         &downloaded)) {
+      if (error_message) {
+        *error_message = "Failed while downloading inline AI response.";
+      }
+      return false;
+    }
+    chunk.resize(downloaded);
+    body += chunk;
+
+    if (!should_parse_stream) {
+      continue;
+    }
+
+    for (char ch : chunk) {
+      if (ch == '\r') {
+        continue;
+      }
+      if (ch != '\n') {
+        line_buffer.push_back(ch);
+        continue;
+      }
+
+      if (line_buffer.empty()) {
+        if (!event_payload.empty()) {
+          if (!flush_event_payload(event_payload)) {
+            if (error_message) {
+              *error_message = "Inline AI stream event payload is invalid.";
+            }
+            return false;
+          }
+          event_payload.clear();
+        }
+      } else if (line_buffer.rfind("data:", 0) == 0) {
+        append_data_line(line_buffer);
+      }
+      line_buffer.clear();
+    }
+  }
+
+  if (should_parse_stream) {
+    if (!line_buffer.empty() && line_buffer.rfind("data:", 0) == 0) {
+      append_data_line(line_buffer);
+    }
+    if (!event_payload.empty() && !flush_event_payload(event_payload)) {
+      if (error_message) {
+        *error_message = "Inline AI stream tail payload is invalid.";
+      }
+      return false;
+    }
+  }
+
+  int response_code = 200;
+  std::string response_message;
+  read_response_metadata(body, &response_code, &response_message);
+
+  if (status_code < 200 || status_code >= 300) {
+    if (is_auth_failure_code(static_cast<int>(status_code)) ||
+        is_auth_failure_code(response_code)) {
+      if (http_status_code) {
+        *http_status_code = 401;
+      }
+    }
+    if (error_message) {
+      *error_message =
+          !response_message.empty()
+              ? response_message
+              : "Inline AI request returned HTTP " +
+                    std::to_string(status_code) + ".";
+    }
+    return false;
+  }
+
+  if (response_code != 0 && response_code != 200) {
+    if (is_auth_failure_code(response_code) && http_status_code) {
+      *http_status_code = 401;
+    }
+    if (error_message) {
+      *error_message =
+          !response_message.empty()
+              ? response_message
+              : "Inline AI response code " + std::to_string(response_code) +
+                    ".";
+    }
+    return false;
+  }
+
+  if (should_parse_stream && saw_stream_frame) {
+    return true;
+  }
+
+  std::wstring output_text;
+  std::string parsed_error;
+  if (!ParseAIAssistantResponse(body, &output_text, &parsed_error)) {
+    if (error_message) {
+      *error_message =
+          !response_message.empty() ? response_message : parsed_error;
+    }
+    return false;
+  }
+  if (!output_text.empty() && on_delta) {
+    on_delta(output_text);
+  }
+  return true;
+}
+
 std::wstring CaptureCurrentPreeditText(RimeSessionId session_id) {
   RIME_STRUCT(RimeContext, ctx);
   std::wstring preedit_text;
@@ -2442,6 +2824,59 @@ std::string ReadFirstStringLikeJsonMember(
     }
   }
   return std::string();
+}
+
+bool ExtractAIAssistantCachedUserId(const rapidjson::Value& value,
+                                    std::string* user_id) {
+  if (!user_id || !value.IsObject()) {
+    return false;
+  }
+  user_id->clear();
+
+  const auto data_it = value.FindMember("data");
+  if (data_it != value.MemberEnd() && data_it->value.IsObject()) {
+    if (ReadStringLikeJsonMember(data_it->value, "id", user_id) &&
+        !user_id->empty()) {
+      return true;
+    }
+  }
+
+  std::string direct_id;
+  const bool looks_like_user =
+      value.FindMember("username") != value.MemberEnd() ||
+      value.FindMember("nickName") != value.MemberEnd() ||
+      value.FindMember("mobile") != value.MemberEnd();
+  if (looks_like_user && ReadStringLikeJsonMember(value, "id", &direct_id) &&
+      !direct_id.empty()) {
+    *user_id = direct_id;
+    return true;
+  }
+  return false;
+}
+
+bool LoadAIAssistantCachedUserId(const AIAssistantConfig& config,
+                                 std::string* user_id) {
+  if (!user_id) {
+    return false;
+  }
+  user_id->clear();
+
+  const fs::path cache_path(ResolveAIAssistantUserInfoCachePath(config));
+  std::ifstream input(cache_path, std::ios::binary);
+  if (!input) {
+    return false;
+  }
+  std::string json((std::istreambuf_iterator<char>(input)),
+                   std::istreambuf_iterator<char>());
+  if (json.empty()) {
+    return false;
+  }
+
+  rapidjson::Document doc;
+  if (doc.Parse(json.c_str()).HasParseError() || !doc.IsObject()) {
+    return false;
+  }
+  return ExtractAIAssistantCachedUserId(doc, user_id);
 }
 
 void ExtractLoginIdentityFromJson(const rapidjson::Value& value,
@@ -4976,16 +5411,19 @@ BOOL RimeWithWeaselHandler::SyncSession(WeaselSessionId ipc_id, EatLine eat) {
   std::wstring error_text;
   bool has_error = false;
   bool has_completion = false;
+  bool streamed_writeback = false;
   {
     std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
     auto it = m_inline_instruction_states.find(ipc_id);
     if (it != m_inline_instruction_states.end() &&
         it->second.phase == InlineInstructionPhase::kRequesting &&
-        (it->second.has_error || !it->second.result_text.empty())) {
+        (it->second.request_completed || it->second.has_error ||
+         !it->second.result_text.empty())) {
       has_completion = true;
       has_error = it->second.has_error;
       commit_text = it->second.result_text;
       error_text = it->second.error_text;
+      streamed_writeback = it->second.streamed_writeback;
       m_inline_instruction_states.erase(it);
     }
   }
@@ -4995,8 +5433,10 @@ BOOL RimeWithWeaselHandler::SyncSession(WeaselSessionId ipc_id, EatLine eat) {
         LOG(WARNING) << "Inline AI request failed: " << wtou8(error_text);
       }
       _Respond(ipc_id, eat);
-    } else {
+    } else if (!streamed_writeback && !commit_text.empty()) {
       _Respond(ipc_id, eat, &commit_text);
+    } else {
+      _Respond(ipc_id, eat);
     }
     _UpdateUI(ipc_id);
     m_active_session = ipc_id;
@@ -6798,24 +7238,42 @@ bool RimeWithWeaselHandler::_TryHandleInlineInstructionKey(
 
   std::wstring prefix_commit = before_prefix;
   rime_api->clear_composition(session_id);
-  AIPanelInstitutionOption selected_option;
-  bool has_selected_option = false;
+  HWND target_hwnd = GetFocus();
+  if (!target_hwnd || !IsWindow(target_hwnd)) {
+    target_hwnd = GetForegroundWindow();
+  }
+  const uint64_t request_id = ++m_ai_request_seq;
   {
     std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
-    const auto it = m_inline_instruction_states.find(ipc_id);
-    if (it != m_inline_instruction_states.end()) {
-      has_selected_option = it->second.has_selected_option;
-      selected_option = it->second.selected_option;
-      m_inline_instruction_states.erase(it);
+    auto it = m_inline_instruction_states.find(ipc_id);
+    if (it == m_inline_instruction_states.end()) {
+      return false;
     }
+    InlineInstructionState& state = it->second;
+    state.session_alive = true;
+    state.detached_writeback = false;
+    state.has_error = false;
+    state.request_completed = false;
+    state.streamed_writeback = false;
+    state.phase = InlineInstructionPhase::kRequesting;
+    state.slash_mode = true;
+    if (!target_hwnd || !IsWindow(target_hwnd)) {
+      target_hwnd = state.target_hwnd;
+    }
+    state.target_hwnd = target_hwnd;
+    state.request_id = request_id;
+    state.prompt_text = prompt_text;
+    state.cursor_offset = 0;
+    state.pending_commit_text = prefix_commit;
+    state.result_text.clear();
+    state.error_text.clear();
   }
-  std::wstring commit_text = prefix_commit;
-  commit_text.append(BuildInlineInstructionMockResult(
-      has_selected_option ? &selected_option : nullptr, prompt_text));
-  DLOG(INFO) << "inline_ai: submit mock result ipc_id=" << ipc_id
+  DLOG(INFO) << "inline_ai: submit request ipc_id=" << ipc_id
+             << " request_id=" << request_id
              << " prompt=" << wtou8(prompt_text)
-             << " commit=" << wtou8(commit_text);
-  _Respond(ipc_id, eat, commit_text.empty() ? nullptr : &commit_text);
+             << " prefix_commit=" << wtou8(prefix_commit);
+  _StartInlineInstructionRequest(ipc_id, request_id, prompt_text);
+  _Respond(ipc_id, eat, prefix_commit.empty() ? nullptr : &prefix_commit);
   return true;
 }
 
@@ -8021,12 +8479,6 @@ void RimeWithWeaselHandler::_StartInlineInstructionRequest(
     WeaselSessionId ipc_id,
     uint64_t request_id,
     const std::wstring& prompt_text) {
-  std::wstring full_context = _CollectAIAssistantContext(ipc_id, prompt_text);
-  if (!full_context.empty()) {
-    full_context.append(L"\n\n");
-  }
-  full_context.append(prompt_text);
-
   HWND target_hwnd = nullptr;
   AIAssistantConfig request_config = m_ai_config;
   AIPanelInstitutionOption selected_option;
@@ -8038,32 +8490,93 @@ void RimeWithWeaselHandler::_StartInlineInstructionRequest(
       target_hwnd = it->second.target_hwnd;
       has_selected_option = it->second.has_selected_option;
       selected_option = it->second.selected_option;
-      if (it->second.has_selected_option &&
-          !it->second.selected_option.template_content.empty()) {
-        request_config.system_prompt =
-            wtou8(it->second.selected_option.template_content);
-      }
     }
   }
 
   AppendAIAssistantContextDump(request_config, "inline_instruction", target_hwnd,
-                               full_context);
+                               prompt_text);
   std::thread([this, request_config, ipc_id, request_id, prompt_text,
-               full_context, has_selected_option, selected_option]() {
-    std::wstring output_text;
+               has_selected_option, selected_option, target_hwnd]() {
     std::string error_message;
     bool ok = false;
-    if (request_config.endpoint.empty()) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(350));
-      output_text = BuildInlineInstructionMockResult(
-          has_selected_option ? &selected_option : nullptr, prompt_text);
-      ok = !output_text.empty();
+    int http_status_code = 0;
+    std::wstring pending_commit_text;
+    bool streamed_any_chunk = false;
+    bool direct_writeback_ok = true;
+
+    const auto append_chunk = [&](const std::wstring& chunk) {
+      if (chunk.empty()) {
+        return;
+      }
+
+      HWND write_target = target_hwnd;
+      {
+        std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
+        const auto it = m_inline_instruction_states.find(ipc_id);
+        if (it == m_inline_instruction_states.end() ||
+            it->second.request_id != request_id ||
+            it->second.phase != InlineInstructionPhase::kRequesting) {
+          return;
+        }
+        if ((!write_target || !IsWindow(write_target)) &&
+            it->second.target_hwnd && IsWindow(it->second.target_hwnd)) {
+          write_target = it->second.target_hwnd;
+        }
+      }
+
+      if (!direct_writeback_ok) {
+        pending_commit_text.append(chunk);
+        return;
+      }
+
+      if (_SendTextToTargetWindow(write_target, chunk)) {
+        streamed_any_chunk = true;
+        _AppendCommittedText(ipc_id, chunk);
+        return;
+      }
+
+      direct_writeback_ok = false;
+      pending_commit_text.append(chunk);
+    };
+
+    if (!has_selected_option) {
+      error_message = "Inline AI instruction option is missing.";
+    } else if (selected_option.app_key.empty()) {
+      error_message = "Inline AI instruction appKey is empty.";
     } else {
-      ok = InvokeAIAssistant(request_config, full_context, &output_text,
-                             &error_message);
+      std::string token;
+      std::string tenant_id;
+      std::string refresh_token;
+      std::string resolve_error;
+      if (!_ResolveAIAssistantLoginState(&token, &tenant_id, &refresh_token,
+                                         &resolve_error)) {
+        error_message = resolve_error.empty() ? "AI 登录状态无效。" : resolve_error;
+      } else {
+        std::string user_id;
+        if (!LoadAIAssistantCachedUserId(request_config, &user_id) &&
+            !token.empty() && !tenant_id.empty()) {
+          std::string user_info_error;
+          int user_info_status_code = 0;
+          if (!RefreshAIAssistantUserInfoCache(request_config, token, tenant_id,
+                                               &user_info_error,
+                                               &user_info_status_code) &&
+              user_info_status_code == 401) {
+            _ForceAIAssistantRelogin();
+          }
+          LoadAIAssistantCachedUserId(request_config, &user_id);
+        }
+        ok = InvokeInlineInstructionChatStream(
+            request_config, selected_option, prompt_text, token, tenant_id,
+            user_id, append_chunk, &error_message, &http_status_code);
+        if (!ok && http_status_code == 401) {
+          _ForceAIAssistantRelogin();
+        }
+      }
     }
+
     bool should_write_back = false;
     HWND writeback_hwnd = nullptr;
+    std::wstring fallback_commit_text;
     {
       std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
       auto it = m_inline_instruction_states.find(ipc_id);
@@ -8071,12 +8584,19 @@ void RimeWithWeaselHandler::_StartInlineInstructionRequest(
           it->second.request_id != request_id) {
         return;
       }
+
       it->second.has_error = !ok;
-      it->second.result_text = ok ? output_text : std::wstring();
+      it->second.request_completed = true;
+      it->second.streamed_writeback =
+          ok && direct_writeback_ok && pending_commit_text.empty() &&
+          streamed_any_chunk;
+      it->second.result_text =
+          ok ? pending_commit_text : std::wstring();
       it->second.error_text = ok ? std::wstring() : u8tow(error_message);
+      fallback_commit_text = it->second.result_text;
       should_write_back = !it->second.session_alive &&
                           it->second.detached_writeback &&
-                          ok && !output_text.empty();
+                          ok && !fallback_commit_text.empty();
       writeback_hwnd = it->second.target_hwnd;
       if (!it->second.session_alive) {
         if (should_write_back) {
@@ -8087,8 +8607,8 @@ void RimeWithWeaselHandler::_StartInlineInstructionRequest(
       }
     }
     if (should_write_back) {
-      if (_SendTextToTargetWindow(writeback_hwnd, output_text)) {
-        _AppendCommittedText(ipc_id, output_text);
+      if (_SendTextToTargetWindow(writeback_hwnd, fallback_commit_text)) {
+        _AppendCommittedText(ipc_id, fallback_commit_text);
       }
       std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
       m_inline_instruction_states.erase(ipc_id);

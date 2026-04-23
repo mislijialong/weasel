@@ -213,6 +213,8 @@ struct InlineInstructionState {
   bool session_alive = true;
   bool detached_writeback = false;
   bool has_error = false;
+  bool request_completed = false;
+  bool streamed_writeback = false;
   bool slash_mode = false;
   bool has_selected_option = false;
   HWND target_hwnd = nullptr;
@@ -230,6 +232,8 @@ struct InlineInstructionState {
     session_alive = true;
     detached_writeback = false;
     has_error = false;
+    request_completed = false;
+    streamed_writeback = false;
     slash_mode = false;
     has_selected_option = false;
     target_hwnd = nullptr;
