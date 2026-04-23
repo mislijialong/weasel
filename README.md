@@ -118,12 +118,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build_and_package.ps1
 
 | 任务名 | 命令 | 说明 |
 |--------|------|------|
-| ⭐ **Build Weasel (Release)** | `build.bat weasel` | 默认构建任务，日常最常用 |
-| **Build Weasel (Debug)** | `build.bat debug weasel` | Debug 模式 |
-| **Rebuild Weasel (Release)** | `build.bat rebuild weasel` | 强制全量重建 |
-| **Build Rime + Weasel** | `build.bat rime weasel` | librime 有更新时使用 |
-| **Build All** | `build.bat all` | 完整构建所有组件 |
-| **Package Installer** | `build.bat weasel installer` | 构建并打包安装程序 |
-| **Package Installer (PS1)** | `build_and_package.ps1` | PowerShell 打包脚本 |
-| **Build Boost** | `build.bat boost` | 首次配置环境时使用 |
-| **Build Data** | `build.bat data` | 更新 Rime 数据文件 |
+| ⭐ **Build Weasel (Release)** | build.bat weasel | 默认构建任务，日常最常用 |
+| **Build Weasel (Debug)** | build.bat debug weasel | Debug 模式 |
+| **Rebuild Weasel (Release)** | build.bat rebuild weasel | 强制全量重建 |
+| **Build Rime + Weasel** | build.bat rime weasel | librime 有更新时使用 |
+| **Build All** | build.bat all | 完整构建所有组件 |
+| **Package Installer** | build.bat weasel installer | 构建并打包安装程序 |
+| **Package Installer (PS1)** | build_and_package.ps1 | PowerShell 打包脚本 |
+| **Build Boost** | build.bat boost | 首次配置环境时使用 |
+| **Build Data** | build.bat data | 更新 Rime 数据文件 |

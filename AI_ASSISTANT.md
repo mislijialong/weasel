@@ -18,6 +18,7 @@
 ai_assistant:
   enabled: true
   trigger_hotkey: "Control+3"
+  instruction_lookup_prefix: "sS"
   login_required: true
   debug_dump_context: false
   debug_dump_path: "ai_context_dump.txt"
@@ -42,6 +43,7 @@ ai_assistant:
 说明：
 
 - `trigger_hotkey` 可配置触发快捷键，默认 `Control+3`。
+- `instruction_lookup_prefix` 可配置 `sS` 这类 AI 指令检索前缀，默认 `sS`。
 - `panel_url` 必填，触发快捷键命中时会直接 `Navigate(panel_url)`。
 - `panel_allowed_origin` 为空时，会从 `panel_url` 自动推导 origin。
 - Host 到 React 的 token/tenantId/上下文通过 `postMessage` 发送，不走 URL 参数。

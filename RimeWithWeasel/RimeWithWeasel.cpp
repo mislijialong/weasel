@@ -152,11 +152,9 @@ constexpr int kAIPanelResizeEdgeBottom = 2;
 constexpr char kDefaultAIAssistantPrompt[] =
     "Continue the user's existing text. Reply with continuation only, with no "
     "explanation, no markdown, and no quotation marks.";
-constexpr wchar_t kInlineInstructionChatEndpoint[] =
-    L"https://copilot.sino-bridge.com:90/v1/chat-messages";
 constexpr wchar_t kSystemCommandCommitPrefix[] = L"__weasel_syscmd__:";
 constexpr char kDefaultSystemCommandInputPrefix[] = "sc";
-constexpr char kInstructionLookupInputPrefix[] = "sS";
+constexpr char kDefaultInstructionLookupInputPrefix[] = "sS";
 constexpr const char* kAllowedSystemCommandIds[] = {
     "jsq",       "calc",     "notepad",   "mspaint", "explorer",
     "txt",       "md",       "gh",        "bd",      "wb",
@@ -218,14 +216,30 @@ bool IsSystemCommandInputText(const std::string& input_text) {
   return IsAllowedSystemCommandId(command_id);
 }
 
-bool IsInstructionLookupInputText(const std::string& input_text) {
-  constexpr size_t kPrefixLength = sizeof(kInstructionLookupInputPrefix) - 1;
-  if (input_text.size() <= kPrefixLength ||
-      input_text.compare(0, kPrefixLength, kInstructionLookupInputPrefix) !=
-          0) {
+bool IsValidInstructionLookupPrefix(const std::string& prefix) {
+  if (prefix.empty()) {
     return false;
   }
-  for (size_t i = kPrefixLength; i < input_text.size(); ++i) {
+  for (char ch : prefix) {
+    const unsigned char uch = static_cast<unsigned char>(ch);
+    if ((uch < 'A' || uch > 'Z') && (uch < 'a' || uch > 'z')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool IsInstructionLookupInputText(const std::string& input_text,
+                                  const std::string& prefix) {
+  const size_t prefix_length = prefix.size();
+  if (prefix_length == 0) {
+    return false;
+  }
+  if (input_text.size() <= prefix_length ||
+      input_text.compare(0, prefix_length, prefix) != 0) {
+    return false;
+  }
+  for (size_t i = prefix_length; i < input_text.size(); ++i) {
     const unsigned char ch = static_cast<unsigned char>(input_text[i]);
     if (ch < 'a' || ch > 'z') {
       return false;
@@ -234,11 +248,12 @@ bool IsInstructionLookupInputText(const std::string& input_text) {
   return true;
 }
 
-std::string ExtractInstructionLookupQuery(const std::string& input_text) {
-  if (!IsInstructionLookupInputText(input_text)) {
+std::string ExtractInstructionLookupQuery(const std::string& input_text,
+                                          const std::string& prefix) {
+  if (!IsInstructionLookupInputText(input_text, prefix)) {
     return std::string();
   }
-  return input_text.substr(sizeof(kInstructionLookupInputPrefix) - 1);
+  return input_text.substr(prefix.size());
 }
 
 std::string NormalizeInstructionLookupAscii(const std::string& text) {
@@ -760,6 +775,7 @@ bool ShouldSuppressSpecialInstructionCandidates(
     std::mutex& inline_mutex,
     std::map<WeaselSessionId, InlineInstructionState>& inline_states,
     WeaselSessionId ipc_id,
+    const std::string& instruction_lookup_prefix,
     const char* input_text) {
   if (!input_text) {
     return false;
@@ -767,7 +783,7 @@ bool ShouldSuppressSpecialInstructionCandidates(
   if (!HasActiveInlineInstructionState(inline_mutex, inline_states, ipc_id)) {
     return false;
   }
-  return IsInstructionLookupInputText(input_text) ||
+  return IsInstructionLookupInputText(input_text, instruction_lookup_prefix) ||
          IsSystemCommandInputText(input_text);
 }
 }  // namespace
@@ -2068,7 +2084,17 @@ bool InvokeInlineInstructionChatStream(
     }
   };
 
-  const std::wstring endpoint = kInlineInstructionChatEndpoint;
+  std::wstring api_base = u8tow(config.ai_api_base);
+  if (api_base.empty()) {
+    if (error_message) {
+      *error_message = "Inline AI api base is empty.";
+    }
+    return false;
+  }
+  while (!api_base.empty() && api_base.back() == L'/') {
+    api_base.pop_back();
+  }
+  const std::wstring endpoint = api_base + L"/chat-messages";
   URL_COMPONENTS parts = {0};
   parts.dwStructSize = sizeof(parts);
   parts.dwSchemeLength = static_cast<DWORD>(-1);
@@ -5671,7 +5697,8 @@ bool RimeWithWeaselHandler::_TryBuildInstructionLookupCandidates(
   }
 
   const std::string query =
-      NormalizeInstructionLookupAscii(ExtractInstructionLookupQuery(input_text));
+      NormalizeInstructionLookupAscii(ExtractInstructionLookupQuery(
+          input_text, m_ai_config.instruction_lookup_prefix));
   if (query.empty()) {
     std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
     m_ai_injected_candidates.erase(ipc_id);
@@ -5855,12 +5882,14 @@ bool RimeWithWeaselHandler::_TryResolveInstructionLookupCandidate(
                                            : nullptr;
   if (ShouldSuppressSpecialInstructionCandidates(
           m_inline_instruction_mutex, m_inline_instruction_states, ipc_id,
-          input_text)) {
+          m_ai_config.instruction_lookup_prefix, input_text)) {
     std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
     m_ai_injected_candidates.erase(ipc_id);
     return false;
   }
-  if (!input_text || !IsInstructionLookupInputText(input_text)) {
+  if (!input_text ||
+      !IsInstructionLookupInputText(input_text,
+                                    m_ai_config.instruction_lookup_prefix)) {
     return false;
   }
 
@@ -5907,7 +5936,9 @@ bool RimeWithWeaselHandler::_TryInjectAIAssistantCandidates(
   const RimeSessionId session_id = to_session_id(ipc_id);
   const char* input_text =
       session_id != 0 ? rime_api->get_input(session_id) : nullptr;
-  if (input_text && IsInstructionLookupInputText(input_text)) {
+  if (input_text &&
+      IsInstructionLookupInputText(input_text,
+                                   m_ai_config.instruction_lookup_prefix)) {
     return _TryBuildInstructionLookupCandidates(ipc_id, input_text,
                                                 ctx.menu.page_size, cinfo);
   }
@@ -5986,12 +6017,14 @@ bool RimeWithWeaselHandler::_TryHandleInstructionLookupCandidateSelectKey(
                                            : nullptr;
   if (ShouldSuppressSpecialInstructionCandidates(
           m_inline_instruction_mutex, m_inline_instruction_states, ipc_id,
-          input_text)) {
+          m_ai_config.instruction_lookup_prefix, input_text)) {
     std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
     m_ai_injected_candidates.erase(ipc_id);
     return false;
   }
-  if (!input_text || !IsInstructionLookupInputText(input_text)) {
+  if (!input_text ||
+      !IsInstructionLookupInputText(input_text,
+                                    m_ai_config.instruction_lookup_prefix)) {
     return false;
   }
 
@@ -6339,7 +6372,11 @@ void RimeWithWeaselHandler::_LoadAIAssistantConfig(RimeConfig* config) {
                    &m_ai_config.trigger_hotkey);
   ReadConfigString(config, "ai_assistant/inline_instruction_prefix",
                    &m_ai_config.inline_instruction_prefix);
+  ReadConfigString(config, "ai_assistant/instruction_lookup_prefix",
+                   &m_ai_config.instruction_lookup_prefix);
   ReadConfigString(config, "ai_assistant/endpoint", &m_ai_config.endpoint);
+  ReadConfigString(config, "ai_assistant/ai_api_base",
+                   &m_ai_config.ai_api_base);
   ReadConfigString(config, "ai_assistant/api_key", &m_ai_config.api_key);
   ReadConfigString(config, "ai_assistant/model", &m_ai_config.model);
   ReadConfigString(config, "ai_assistant/debug_dump_path",
@@ -6382,6 +6419,16 @@ void RimeWithWeaselHandler::_LoadAIAssistantConfig(RimeConfig* config) {
   }
   if (m_ai_config.inline_instruction_prefix.size() != 1) {
     m_ai_config.inline_instruction_prefix = "/";
+  }
+  if (!IsValidInstructionLookupPrefix(m_ai_config.instruction_lookup_prefix)) {
+    if (!m_ai_config.instruction_lookup_prefix.empty()) {
+      LOG(WARNING) << "Invalid ai_assistant/instruction_lookup_prefix: "
+                   << m_ai_config.instruction_lookup_prefix
+                   << "; fallback to "
+                   << kDefaultInstructionLookupInputPrefix << ".";
+    }
+    m_ai_config.instruction_lookup_prefix =
+        kDefaultInstructionLookupInputPrefix;
   }
   if (!TryParseAiHotkeyConfig(m_ai_config.trigger_hotkey,
                               &m_ai_config.trigger_binding) ||
@@ -9877,7 +9924,8 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id,
     const bool suppress_special_instruction_candidates =
         has_inline_state && inline_state.IsActive() &&
         input_text &&
-        (IsInstructionLookupInputText(input_text) ||
+        (IsInstructionLookupInputText(input_text,
+                                      m_ai_config.instruction_lookup_prefix) ||
          IsSystemCommandInputText(input_text));
     if (suppress_special_instruction_candidates) {
       std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
@@ -9887,7 +9935,9 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id,
         !suppress_special_instruction_candidates && ctx.menu.num_candidates > 0;
     const bool should_try_instruction_lookup =
         !suppress_special_instruction_candidates &&
-        input_text && IsInstructionLookupInputText(input_text);
+        input_text &&
+        IsInstructionLookupInputText(input_text,
+                                     m_ai_config.instruction_lookup_prefix);
     CandidateInfo cinfo;
     if (has_candidates || should_try_instruction_lookup) {
       _GetCandidateInfo(cinfo, ctx, ipc_id);
@@ -10628,7 +10678,8 @@ void RimeWithWeaselHandler::_GetContext(Context& weasel_context,
     const bool suppress_special_instruction_candidates =
         has_inline_state && inline_state.IsActive() &&
         input_text &&
-        (IsInstructionLookupInputText(input_text) ||
+        (IsInstructionLookupInputText(input_text,
+                                      m_ai_config.instruction_lookup_prefix) ||
          IsSystemCommandInputText(input_text));
     if (suppress_special_instruction_candidates) {
       std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
@@ -10636,7 +10687,9 @@ void RimeWithWeaselHandler::_GetContext(Context& weasel_context,
     }
     const bool should_try_instruction_lookup =
         !suppress_special_instruction_candidates &&
-        input_text && IsInstructionLookupInputText(input_text);
+        input_text &&
+        IsInstructionLookupInputText(input_text,
+                                     m_ai_config.instruction_lookup_prefix);
     if (has_inline_state && inline_state.IsActive()) {
       weasel_context.preedit.str =
           inline_state.phase == InlineInstructionPhase::kRequesting

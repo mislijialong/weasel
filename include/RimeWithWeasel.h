@@ -56,7 +56,9 @@ struct AIAssistantConfig {
         trigger_hotkey("Control+3"),
         trigger_binding('3', ibus::CONTROL_MASK),
         inline_instruction_prefix("/"),
+        instruction_lookup_prefix("sS"),
         endpoint(),
+        ai_api_base(),
         api_key(),
         model("gpt-5"),
         debug_dump_path("ai_context_dump.txt"),
@@ -83,7 +85,9 @@ struct AIAssistantConfig {
   std::string trigger_hotkey;
   AiHotkeyBinding trigger_binding;
   std::string inline_instruction_prefix;
+  std::string instruction_lookup_prefix;
   std::string endpoint;
+  std::string ai_api_base;
   std::string api_key;
   std::string model;
   std::string debug_dump_path;

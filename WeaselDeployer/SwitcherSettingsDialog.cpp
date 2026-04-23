@@ -70,6 +70,38 @@ void MarkVirtualKeyState(UINT vkey, bool down, BYTE key_state[256]) {
 }
 
 constexpr const wchar_t* kDefaultAiHotkey = L"Control+3";
+constexpr const wchar_t* kDefaultInstructionLookupPrefix = L"sS";
+
+std::wstring TrimInstructionLookupPrefixText(const std::wstring& text) {
+  size_t begin = 0;
+  while (begin < text.size() &&
+         iswspace(static_cast<wint_t>(text[begin])) != 0) {
+    ++begin;
+  }
+  size_t end = text.size();
+  while (end > begin &&
+         iswspace(static_cast<wint_t>(text[end - 1])) != 0) {
+    --end;
+  }
+  return text.substr(begin, end - begin);
+}
+
+bool IsValidInstructionLookupPrefixText(const std::wstring& text) {
+  if (text.empty()) {
+    return true;
+  }
+  for (wchar_t ch : text) {
+    if ((ch < L'A' || ch > L'Z') && (ch < L'a' || ch > L'z')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::string BuildInstructionLookupRecognizerPattern(
+    const std::wstring& prefix_text) {
+  return "^" + wtou8(prefix_text) + "[a-z]+$";
+}
 
 }  // namespace
 
@@ -272,19 +304,29 @@ void AIAssistantHotkeyEdit::UpdatePartialCapture(UINT modifiers) {
 SwitcherSettingsDialog::SwitcherSettingsDialog(RimeSwitcherSettings* settings)
     : settings_(settings),
       ai_settings_(nullptr),
+      instruction_lookup_schema_settings_(nullptr),
       loaded_(false),
       schema_modified_(false),
       ai_hotkey_modified_(false),
-      ai_hotkey_saved_(false),
-      initial_ai_hotkey_model_text_() {
+      instruction_lookup_prefix_modified_(false),
+      ai_settings_saved_(false),
+      initial_ai_hotkey_model_text_(),
+      initial_instruction_lookup_prefix_() {
   api_ = (RimeLeversApi*)rime_get_api()->find_module("levers")->get_api();
   if (api_) {
     ai_settings_ =
         api_->custom_settings_init("weasel", "Weasel::SwitcherSettingsDialog");
+    instruction_lookup_schema_settings_ =
+        api_->custom_settings_init("rime_ice",
+                                   "Weasel::SwitcherSettingsDialog");
   }
 }
 
 SwitcherSettingsDialog::~SwitcherSettingsDialog() {
+  if (api_ && instruction_lookup_schema_settings_) {
+    api_->custom_settings_destroy(instruction_lookup_schema_settings_);
+    instruction_lookup_schema_settings_ = nullptr;
+  }
   if (api_ && ai_settings_) {
     api_->custom_settings_destroy(ai_settings_);
     ai_settings_ = nullptr;
@@ -335,11 +377,15 @@ void SwitcherSettingsDialog::Populate() {
   const std::wstring ai_hotkey = LoadAIAssistantTriggerHotkey();
   ai_hotkey_.InitializeFromConfigText(ai_hotkey);
   initial_ai_hotkey_model_text_ = ai_hotkey_.GetModelText();
+  const std::wstring instruction_lookup_prefix = LoadInstructionLookupPrefix();
+  instruction_lookup_prefix_.SetWindowTextW(instruction_lookup_prefix.c_str());
+  initial_instruction_lookup_prefix_ = instruction_lookup_prefix;
 
   loaded_ = true;
   schema_modified_ = false;
   ai_hotkey_modified_ = false;
-  ai_hotkey_saved_ = false;
+  instruction_lookup_prefix_modified_ = false;
+  ai_settings_saved_ = false;
   UpdateAIAssistantHotkeyUi();
 }
 
@@ -431,6 +477,39 @@ std::wstring SwitcherSettingsDialog::LoadAIAssistantTriggerHotkey() const {
   return u8tow(value);
 }
 
+std::wstring SwitcherSettingsDialog::LoadInstructionLookupPrefix() const {
+  if (!api_ || !ai_settings_) {
+    return kDefaultInstructionLookupPrefix;
+  }
+  if (!api_->load_settings(ai_settings_)) {
+    return kDefaultInstructionLookupPrefix;
+  }
+  RimeConfig config = {0};
+  if (!api_->settings_get_config(ai_settings_, &config)) {
+    return kDefaultInstructionLookupPrefix;
+  }
+  const char* value = rime_get_api()->config_get_cstring(
+      &config, "ai_assistant/instruction_lookup_prefix");
+  if (!value || !*value) {
+    return kDefaultInstructionLookupPrefix;
+  }
+  const std::wstring trimmed = TrimInstructionLookupPrefixText(u8tow(value));
+  if (trimmed.empty() || !IsValidInstructionLookupPrefixText(trimmed)) {
+    return kDefaultInstructionLookupPrefix;
+  }
+  return trimmed;
+}
+
+std::wstring SwitcherSettingsDialog::GetCurrentInstructionLookupPrefix() const {
+  CString text;
+  instruction_lookup_prefix_.GetWindowTextW(text);
+  return TrimInstructionLookupPrefixText(std::wstring(text.GetString()));
+}
+
+bool SwitcherSettingsDialog::IsCurrentInstructionLookupPrefixSavable() const {
+  return IsValidInstructionLookupPrefixText(GetCurrentInstructionLookupPrefix());
+}
+
 std::wstring SwitcherSettingsDialog::LoadStringResource(UINT id) const {
   CString text;
   text.LoadStringW(id);
@@ -444,6 +523,8 @@ void SwitcherSettingsDialog::UpdateAIAssistantHotkeyUi() {
 
   ai_hotkey_modified_ =
       ai_hotkey_.GetModelText() != initial_ai_hotkey_model_text_;
+  instruction_lookup_prefix_modified_ =
+      GetCurrentInstructionLookupPrefix() != initial_instruction_lookup_prefix_;
   ai_hotkey_hint_.SetWindowTextW(GetCurrentAIAssistantHotkeyHintText().c_str());
 
   if (schema_list_.GetNextItem(-1, LVNI_SELECTED) < 0) {
@@ -452,7 +533,9 @@ void SwitcherSettingsDialog::UpdateAIAssistantHotkeyUi() {
   }
 
   const bool allow_ok =
-      !(ai_hotkey_modified_ && !IsCurrentAIAssistantHotkeySavable());
+      !(ai_hotkey_modified_ && !IsCurrentAIAssistantHotkeySavable()) &&
+      !(instruction_lookup_prefix_modified_ &&
+        !IsCurrentInstructionLookupPrefixSavable());
   if (CWindow ok_button = GetDlgItem(IDOK)) {
     ok_button.EnableWindow(allow_ok ? TRUE : FALSE);
   }
@@ -479,6 +562,8 @@ LRESULT SwitcherSettingsDialog::OnInitDialog(UINT,
   ai_hotkey_.SubclassWindow(GetDlgItem(IDC_AI_HOTKEY));
   ai_hotkey_.SetReadOnly(TRUE);
   ai_hotkey_.EnableWindow(TRUE);
+  instruction_lookup_prefix_.Attach(
+      GetDlgItem(IDC_AI_INSTRUCTION_LOOKUP_PREFIX));
 
   if (HWND legacy_button = GetDlgItem(IDC_GET_SCHEMATA)) {
     ::EnableWindow(legacy_button, FALSE);
@@ -501,6 +586,14 @@ LRESULT SwitcherSettingsDialog::OnAIAssistantHotkeyStateChanged(UINT,
                                                                 WPARAM,
                                                                 LPARAM,
                                                                 BOOL&) {
+  UpdateAIAssistantHotkeyUi();
+  return 0;
+}
+
+LRESULT SwitcherSettingsDialog::OnInstructionLookupPrefixChanged(WORD,
+                                                                 WORD,
+                                                                 HWND,
+                                                                 BOOL&) {
   UpdateAIAssistantHotkeyUi();
   return 0;
 }
@@ -529,9 +622,14 @@ LRESULT SwitcherSettingsDialog::OnOK(WORD, WORD code, HWND, BOOL&) {
     delete[] selection;
   }
 
-  if (ai_hotkey_modified_ && ai_settings_) {
+  if ((ai_hotkey_modified_ || instruction_lookup_prefix_modified_) &&
+      ai_settings_) {
     if (!IsCurrentAIAssistantHotkeySavable()) {
       ai_hotkey_.SetFocus();
+      return 0;
+    }
+    if (!IsCurrentInstructionLookupPrefixSavable()) {
+      instruction_lookup_prefix_.SetFocus();
       return 0;
     }
 
@@ -541,14 +639,41 @@ LRESULT SwitcherSettingsDialog::OnOK(WORD, WORD code, HWND, BOOL&) {
     if (ai_hotkey_utf8.empty()) {
       ai_hotkey_utf8 = "Control+3";
     }
+    std::wstring instruction_lookup_prefix =
+        GetCurrentInstructionLookupPrefix();
+    if (instruction_lookup_prefix.empty()) {
+      instruction_lookup_prefix = kDefaultInstructionLookupPrefix;
+    }
+    const std::string instruction_lookup_prefix_utf8 =
+        wtou8(instruction_lookup_prefix);
     if (!api_->customize_string(ai_settings_, "ai_assistant/trigger_hotkey",
                                 ai_hotkey_utf8.c_str()) ||
+        !api_->customize_string(ai_settings_,
+                                "ai_assistant/instruction_lookup_prefix",
+                                instruction_lookup_prefix_utf8.c_str()) ||
         !api_->save_settings(ai_settings_)) {
-      MessageBoxW(L"AI 面板快捷键保存失败，请重试。", L"智能输入法",
+      MessageBoxW(L"AI 配置保存失败，请重试。", L"智能输入法",
                   MB_OK | MB_ICONEXCLAMATION);
       return 0;
     }
-    ai_hotkey_saved_ = true;
+    ai_settings_saved_ = true;
+
+    if (instruction_lookup_prefix_modified_ && instruction_lookup_schema_settings_) {
+      const std::string recognizer_pattern =
+          BuildInstructionLookupRecognizerPattern(instruction_lookup_prefix);
+      if (!api_->customize_string(instruction_lookup_schema_settings_,
+                                  "instruction_lookup/prefix",
+                                  instruction_lookup_prefix_utf8.c_str()) ||
+          !api_->customize_string(
+              instruction_lookup_schema_settings_,
+              "recognizer/patterns/instruction_lookup",
+              recognizer_pattern.c_str()) ||
+          !api_->save_settings(instruction_lookup_schema_settings_)) {
+        MessageBoxW(
+            L"AI 指令检索前缀已保存，但 rime_ice 方案同步失败；重新部署后新前缀仍可用，旧的 sS 规则可能仍保留。",
+            L"智能输入法", MB_OK | MB_ICONEXCLAMATION);
+      }
+    }
   }
 
   EndDialog(code);

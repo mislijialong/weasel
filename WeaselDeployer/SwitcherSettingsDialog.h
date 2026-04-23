@@ -70,13 +70,15 @@ class SwitcherSettingsDialog : public CDialogImpl<SwitcherSettingsDialog> {
 
   SwitcherSettingsDialog(RimeSwitcherSettings* settings);
   ~SwitcherSettingsDialog();
-  bool ai_hotkey_saved() const { return ai_hotkey_saved_; }
+  bool ai_settings_saved() const { return ai_settings_saved_; }
 
  protected:
   BEGIN_MSG_MAP(SwitcherSettingsDialog)
   MESSAGE_HANDLER(WM_INITDIALOG, OnInitDialog)
   MESSAGE_HANDLER(WM_CLOSE, OnClose)
   MESSAGE_HANDLER(WM_AI_HOTKEY_STATE_CHANGED, OnAIAssistantHotkeyStateChanged)
+  COMMAND_HANDLER(IDC_AI_INSTRUCTION_LOOKUP_PREFIX, EN_CHANGE,
+                  OnInstructionLookupPrefixChanged)
   COMMAND_ID_HANDLER(IDOK, OnOK)
   NOTIFY_HANDLER(IDC_SCHEMA_LIST, LVN_ITEMCHANGED, OnSchemaListItemChanged)
   END_MSG_MAP()
@@ -84,6 +86,7 @@ class SwitcherSettingsDialog : public CDialogImpl<SwitcherSettingsDialog> {
   LRESULT OnInitDialog(UINT, WPARAM, LPARAM, BOOL&);
   LRESULT OnClose(UINT, WPARAM, LPARAM, BOOL&);
   LRESULT OnAIAssistantHotkeyStateChanged(UINT, WPARAM, LPARAM, BOOL&);
+  LRESULT OnInstructionLookupPrefixChanged(WORD, WORD, HWND, BOOL&);
   LRESULT OnOK(WORD, WORD, HWND, BOOL&);
   LRESULT OnSchemaListItemChanged(int, LPNMHDR, BOOL&);
 
@@ -91,6 +94,9 @@ class SwitcherSettingsDialog : public CDialogImpl<SwitcherSettingsDialog> {
   std::wstring GetCurrentAIAssistantHotkeyHintText() const;
   bool IsCurrentAIAssistantHotkeySavable() const;
   std::wstring LoadAIAssistantTriggerHotkey() const;
+  bool IsCurrentInstructionLookupPrefixSavable() const;
+  std::wstring LoadInstructionLookupPrefix() const;
+  std::wstring GetCurrentInstructionLookupPrefix() const;
   std::wstring LoadStringResource(UINT id) const;
   void Populate();
   void ShowDetails(RimeSchemaInfo* info);
@@ -99,14 +105,18 @@ class SwitcherSettingsDialog : public CDialogImpl<SwitcherSettingsDialog> {
   RimeLeversApi* api_;
   RimeSwitcherSettings* settings_;
   RimeCustomSettings* ai_settings_;
+  RimeCustomSettings* instruction_lookup_schema_settings_;
   bool loaded_;
   bool schema_modified_;
   bool ai_hotkey_modified_;
-  bool ai_hotkey_saved_;
+  bool instruction_lookup_prefix_modified_;
+  bool ai_settings_saved_;
   std::wstring initial_ai_hotkey_model_text_;
+  std::wstring initial_instruction_lookup_prefix_;
 
   CCheckListViewCtrl schema_list_;
   CStatic description_;
   CStatic ai_hotkey_hint_;
   AIAssistantHotkeyEdit ai_hotkey_;
+  CEdit instruction_lookup_prefix_;
 };
