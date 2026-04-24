@@ -409,6 +409,94 @@ char GetInstructionLookupPinyinInitialFallback(wchar_t ch) {
   return '\0';
 }
 
+struct WeightedPinyinCode {
+  std::string code;
+  bool has_weight = false;
+  int weight = 0;
+};
+
+bool IsAsciiWhitespaceChar(char ch) {
+  return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' ||
+         ch == '\f' || ch == '\v';
+}
+
+std::string TrimAsciiWhitespaceCopy(const std::string& text) {
+  size_t begin = 0;
+  while (begin < text.size() && IsAsciiWhitespaceChar(text[begin])) {
+    ++begin;
+  }
+  size_t end = text.size();
+  while (end > begin && IsAsciiWhitespaceChar(text[end - 1])) {
+    --end;
+  }
+  return text.substr(begin, end - begin);
+}
+
+bool TryParseDictionaryWeight(const std::string& text, int* weight) {
+  if (!weight) {
+    return false;
+  }
+  std::string trimmed = TrimAsciiWhitespaceCopy(text);
+  if (trimmed.empty()) {
+    return false;
+  }
+  if (!trimmed.empty() && trimmed.back() == '%') {
+    trimmed.pop_back();
+    trimmed = TrimAsciiWhitespaceCopy(trimmed);
+  }
+  if (trimmed.empty()) {
+    return false;
+  }
+  size_t pos = 0;
+  bool negative = false;
+  if (trimmed[pos] == '+' || trimmed[pos] == '-') {
+    negative = trimmed[pos] == '-';
+    ++pos;
+  }
+  if (pos >= trimmed.size()) {
+    return false;
+  }
+  int value = 0;
+  for (; pos < trimmed.size(); ++pos) {
+    const char ch = trimmed[pos];
+    if (ch < '0' || ch > '9') {
+      return false;
+    }
+    value = value * 10 + (ch - '0');
+  }
+  *weight = negative ? -value : value;
+  return true;
+}
+
+bool ShouldReplaceWeightedPinyinCode(const WeightedPinyinCode& existing,
+                                     const WeightedPinyinCode& candidate) {
+  if (!candidate.has_weight) {
+    return false;
+  }
+  if (!existing.has_weight) {
+    return true;
+  }
+  return candidate.weight > existing.weight;
+}
+
+template <typename Key>
+void UpsertWeightedPinyinCode(
+    std::unordered_map<Key, WeightedPinyinCode>* codes,
+    const Key& key,
+    WeightedPinyinCode candidate) {
+  if (!codes) {
+    return;
+  }
+  const auto it = codes->find(key);
+  if (it == codes->end()) {
+    codes->emplace(key, std::move(candidate));
+    return;
+  }
+  if (ShouldReplaceWeightedPinyinCode(it->second, candidate)) {
+    it->second = std::move(candidate);
+  }
+}
+
 class InstructionLookupPinyinCache {
  public:
   bool TryGetPhraseCode(const std::wstring& phrase, std::string* code) {
@@ -421,7 +509,7 @@ class InstructionLookupPinyinCache {
     if (it == phrase_codes_.end()) {
       return false;
     }
-    *code = it->second;
+    *code = it->second.code;
     return true;
   }
 
@@ -435,7 +523,7 @@ class InstructionLookupPinyinCache {
     if (it == char_codes_.end()) {
       return false;
     }
-    *code = it->second;
+    *code = it->second.code;
     return true;
   }
 
@@ -513,15 +601,22 @@ class InstructionLookupPinyinCache {
       if (code.empty()) {
         continue;
       }
+      const std::string weight_text =
+          second_tab == std::string::npos ? std::string()
+                                          : line.substr(second_tab + 1);
 
       const std::wstring phrase = u8tow(phrase_u8);
       if (phrase.empty()) {
         continue;
       }
-      phrase_codes_.emplace(phrase, code);
+      WeightedPinyinCode entry;
+      entry.code = code;
+      entry.has_weight = TryParseDictionaryWeight(weight_text, &entry.weight);
+      UpsertWeightedPinyinCode(&phrase_codes_, phrase, entry);
       max_phrase_length_ = max(max_phrase_length_, phrase.size());
       if (phrase.size() == 1) {
-        char_codes_.emplace(phrase.front(), code);
+        UpsertWeightedPinyinCode(&char_codes_, phrase.front(),
+                                 std::move(entry));
       }
     }
 
@@ -531,8 +626,8 @@ class InstructionLookupPinyinCache {
   std::mutex mutex_;
   bool load_attempted_ = false;
   size_t max_phrase_length_ = 1;
-  std::unordered_map<std::wstring, std::string> phrase_codes_;
-  std::unordered_map<wchar_t, std::string> char_codes_;
+  std::unordered_map<std::wstring, WeightedPinyinCode> phrase_codes_;
+  std::unordered_map<wchar_t, WeightedPinyinCode> char_codes_;
 };
 
 InstructionLookupPinyinCache& GetInstructionLookupPinyinCache() {
