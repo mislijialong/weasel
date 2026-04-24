@@ -62,6 +62,7 @@ class AIAssistantInstructions {
   void Replace(std::vector<AIPanelInstitutionOption> options);
   bool Empty() const;
   std::vector<AIPanelInstitutionOption> Snapshot() const;
+  bool FindById(const std::wstring& id, AIPanelInstitutionOption* option) const;
   bool MatchExactName(const std::wstring& text,
                       AIPanelInstitutionOption* option) const;
 
@@ -70,5 +71,6 @@ class AIAssistantInstructions {
 
   mutable std::mutex mutex_;
   std::vector<AIPanelInstitutionOption> options_;
+  std::map<std::wstring, size_t> index_by_id_;
   std::map<std::wstring, size_t> index_by_name_;
 };

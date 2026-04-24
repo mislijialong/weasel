@@ -148,6 +148,9 @@ constexpr int kAIPanelResizeEdgeBottom = 2;
 constexpr wchar_t kSystemCommandCommitPrefix[] = L"__weasel_syscmd__:";
 constexpr char kDefaultSystemCommandInputPrefix[] = "sc";
 constexpr char kDefaultInstructionLookupInputPrefix[] = "sS";
+constexpr char kDefaultAIAssistantInstructionChangedTopic[] =
+    "/mqtt/topic/sino/langwell/ins/ins/changed/+";
+constexpr INTERNET_PORT kAIAssistantUserInfoEndpointPort = 85;
 constexpr const char* kAllowedSystemCommandIds[] = {
     "jsq",       "calc",     "notepad",   "mspaint", "explorer",
     "txt",       "md",       "gh",        "bd",      "wb",
@@ -2261,7 +2264,7 @@ std::string TrimAsciiWhitespace(const std::string& input) {
   return input.substr(first, last - first);
 }
 
-std::string GenerateLoginClientId() {
+std::string GenerateRandomMqttClientId() {
   static std::mutex mutex;
   static std::mt19937_64 rng(
       static_cast<uint64_t>(std::chrono::high_resolution_clock::now()
@@ -2284,6 +2287,18 @@ std::string GenerateLoginClientId() {
               static_cast<unsigned long long>((b >> 48) & 0xffffULL),
               static_cast<unsigned long long>(b & 0xffffffffffffULL));
   return buffer;
+}
+
+std::string GenerateLoginClientId() {
+  return GenerateRandomMqttClientId();
+}
+
+bool IsValidAIAssistantInstructionChangedTopic(const std::string& topic) {
+  const std::string trimmed = TrimAsciiWhitespace(topic);
+  if (trimmed.size() < 2 || trimmed.find('#') != std::string::npos) {
+    return false;
+  }
+  return trimmed.compare(trimmed.size() - 2, 2, "/+") == 0;
 }
 
 std::wstring ReplaceUuidPlaceholder(const std::wstring& text,
@@ -2342,6 +2357,65 @@ std::string BuildMqttTopicForClient(const AIAssistantConfig& config,
   }
   topic += client_id;
   return topic;
+}
+
+bool ParseMqttRemainingLength(const std::vector<uint8_t>& packet,
+                              size_t offset,
+                              size_t* value,
+                              size_t* used_bytes);
+int MqttPacketType(const std::vector<uint8_t>& packet);
+
+std::vector<uint8_t> BuildMqttPingReqPacket() {
+  return {0xC0, 0x00};
+}
+
+bool WaitForAIAssistantInstructionChangedStop(std::atomic<bool>* stop,
+                                              DWORD milliseconds) {
+  if (!stop) {
+    Sleep(milliseconds);
+    return false;
+  }
+  DWORD elapsed = 0;
+  while (!stop->load() && elapsed < milliseconds) {
+    const DWORD remaining = milliseconds - elapsed;
+    const DWORD chunk = remaining < 50 ? remaining : 50;
+    Sleep(chunk);
+    elapsed += chunk;
+  }
+  return stop->load();
+}
+
+bool IsMqttPingResp(const std::vector<uint8_t>& packet) {
+  if (MqttPacketType(packet) != 13) {
+    return false;
+  }
+  size_t remaining = 0;
+  size_t used = 0;
+  return ParseMqttRemainingLength(packet, 1, &remaining, &used) &&
+         remaining == 0;
+}
+
+bool TryExtractInstructionIdFromChangedTopic(
+    const std::string& topic_filter,
+    const std::string& topic,
+    std::string* instruction_id) {
+  if (!instruction_id || !IsValidAIAssistantInstructionChangedTopic(topic_filter)) {
+    return false;
+  }
+  instruction_id->clear();
+
+  const std::string prefix = topic_filter.substr(0, topic_filter.size() - 1);
+  if (topic.size() <= prefix.size() ||
+      topic.compare(0, prefix.size(), prefix) != 0) {
+    return false;
+  }
+
+  const std::string candidate_id = topic.substr(prefix.size());
+  if (candidate_id.empty() || candidate_id.find('/') != std::string::npos) {
+    return false;
+  }
+  *instruction_id = candidate_id;
+  return true;
 }
 
 bool LoadAIAssistantLoginIdentity(const AIAssistantConfig& config,
@@ -3852,24 +3926,13 @@ void AddAIAssistantUserInfoEndpointCandidatesFromUrl(
   if (!ParseHttpUrlOrigin(url, &scheme, &host, &port)) {
     return;
   }
+  port = kAIAssistantUserInfoEndpointPort;
   const std::wstring origin = BuildHttpOrigin(scheme, host, port);
   if (origin.empty()) {
     return;
   }
   AddUniqueEndpoint(endpoints,
                     origin + L"/lamp-api/oauth/anyone/getUserInfoById");
-  AddUniqueEndpoint(endpoints,
-                    origin + L"/api/oauth/anyone/getUserInfoById");
-  if (port == 84 || port == 85) {
-    const INTERNET_PORT alt_port = port == 85
-                                       ? static_cast<INTERNET_PORT>(84)
-                                       : static_cast<INTERNET_PORT>(85);
-    const std::wstring alt_origin = BuildHttpOrigin(scheme, host, alt_port);
-    AddUniqueEndpoint(endpoints,
-                      alt_origin + L"/lamp-api/oauth/anyone/getUserInfoById");
-    AddUniqueEndpoint(endpoints,
-                      alt_origin + L"/api/oauth/anyone/getUserInfoById");
-  }
 }
 
 std::vector<std::wstring> BuildAIAssistantUserInfoEndpointCandidates(
@@ -4464,6 +4527,11 @@ RimeWithWeaselHandler::RimeWithWeaselHandler(UI* ui)
       m_input_active_context_key(),
       m_ai_login_pending(false),
       m_ai_login_stop(false),
+      m_ai_inst_changed_stop(false),
+      m_ai_inst_changed_session_handle(nullptr),
+      m_ai_inst_changed_connection_handle(nullptr),
+      m_ai_inst_changed_request_handle(nullptr),
+      m_ai_inst_changed_websocket_handle(nullptr),
       m_last_input_rect{0, 0, 0, 0},
       m_has_last_input_rect(false),
       m_ai_request_seq(0) {
@@ -4483,6 +4551,7 @@ RimeWithWeaselHandler::RimeWithWeaselHandler(UI* ui)
 }
 
 RimeWithWeaselHandler::~RimeWithWeaselHandler() {
+  _StopAIAssistantInstructionChangedListener();
   _StopAIAssistantLoginFlow();
   _DestroyAIPanel();
   m_input_content_store.Clear();
@@ -4576,10 +4645,12 @@ void RimeWithWeaselHandler::Initialize() {
     _LoadAppOptions(&config, m_app_options);
     rime_api->config_close(&config);
   }
+  _StartAIAssistantInstructionChangedListener();
   m_last_schema_id.clear();
 }
 
 void RimeWithWeaselHandler::Finalize() {
+  _StopAIAssistantInstructionChangedListener();
   _StopAIAssistantLoginFlow();
   _DestroyAIPanel();
   _ClearAIAssistantInstructionCache();
@@ -5940,6 +6011,8 @@ void RimeWithWeaselHandler::_LoadAIAssistantConfig(RimeConfig* config) {
   ReadConfigString(config, "ai_assistant/mqtt_url", &m_ai_config.mqtt_url);
   ReadConfigString(config, "ai_assistant/mqtt_topic_template",
                    &m_ai_config.mqtt_topic_template);
+  ReadConfigString(config, "ai_assistant/mqtt_ins_changed_topic",
+                   &m_ai_config.mqtt_ins_changed_topic);
   ReadConfigString(config, "ai_assistant/mqtt_username",
                    &m_ai_config.mqtt_username);
   ReadConfigString(config, "ai_assistant/mqtt_password",
@@ -5984,10 +6057,62 @@ void RimeWithWeaselHandler::_LoadAIAssistantConfig(RimeConfig* config) {
   if (m_ai_config.mqtt_timeout_ms <= 0) {
     m_ai_config.mqtt_timeout_ms = 120000;
   }
+  if (m_ai_config.mqtt_ins_changed_topic.empty()) {
+    m_ai_config.mqtt_ins_changed_topic =
+        kDefaultAIAssistantInstructionChangedTopic;
+  } else if (!IsValidAIAssistantInstructionChangedTopic(
+                 m_ai_config.mqtt_ins_changed_topic)) {
+    LOG(WARNING) << "Invalid ai_assistant/mqtt_ins_changed_topic: "
+                 << m_ai_config.mqtt_ins_changed_topic
+                 << "; fallback to "
+                 << kDefaultAIAssistantInstructionChangedTopic << ".";
+    m_ai_config.mqtt_ins_changed_topic =
+        kDefaultAIAssistantInstructionChangedTopic;
+  }
 
   m_input_content_store.SetLimits(
       static_cast<size_t>(max(1024, m_ai_config.max_history_chars * 2)),
       64, 16);
+}
+
+void RimeWithWeaselHandler::_StartAIAssistantInstructionChangedListener() {
+  _StopAIAssistantInstructionChangedListener();
+  if (!m_ai_config.enabled) {
+    return;
+  }
+  if (m_ai_config.mqtt_url.empty() ||
+      m_ai_config.mqtt_ins_changed_topic.empty()) {
+    return;
+  }
+
+  m_ai_inst_changed_stop.store(false);
+  m_ai_inst_changed_thread = std::thread([this]() {
+    _RunAIAssistantInstructionChangedListener();
+  });
+}
+
+void RimeWithWeaselHandler::_StopAIAssistantInstructionChangedListener() {
+  m_ai_inst_changed_stop.store(true);
+  std::vector<HINTERNET> handles_to_close;
+  {
+    std::lock_guard<std::mutex> lock(m_ai_inst_changed_handle_mutex);
+    auto take_handle = [&handles_to_close](void** handle) {
+      if (handle && *handle) {
+        handles_to_close.push_back(static_cast<HINTERNET>(*handle));
+        *handle = nullptr;
+      }
+    };
+    take_handle(&m_ai_inst_changed_websocket_handle);
+    take_handle(&m_ai_inst_changed_request_handle);
+    take_handle(&m_ai_inst_changed_connection_handle);
+    take_handle(&m_ai_inst_changed_session_handle);
+  }
+  for (HINTERNET handle : handles_to_close) {
+    WinHttpCloseHandle(handle);
+  }
+  if (m_ai_inst_changed_thread.joinable()) {
+    m_ai_inst_changed_thread.join();
+  }
 }
 
 void RimeWithWeaselHandler::_StopAIAssistantLoginFlow() {
@@ -6545,6 +6670,294 @@ void RimeWithWeaselHandler::_RunAIAssistantLoginListener(
   close_handle(&websocket);
   close_handle(&connection);
   close_handle(&session);
+}
+
+void RimeWithWeaselHandler::_RunAIAssistantInstructionChangedListener() {
+  const AIAssistantConfig config = m_ai_config;
+  if (config.mqtt_url.empty() || config.mqtt_ins_changed_topic.empty()) {
+    return;
+  }
+
+  const ParsedWebSocketUrl ws_url = ParseWebSocketUrl(u8tow(config.mqtt_url));
+  if (!ws_url.valid) {
+    LOG(WARNING) << "AI instruction changed mqtt_url invalid: "
+                 << config.mqtt_url;
+    return;
+  }
+
+  _RefreshAIAssistantInstructionCacheAsync();
+
+  auto wait_before_reconnect = [this]() {
+    return WaitForAIAssistantInstructionChangedStop(
+        &m_ai_inst_changed_stop, 2000);
+  };
+  auto set_tracked_handle = [this](void** tracked_handle, HINTERNET handle) {
+    std::lock_guard<std::mutex> lock(m_ai_inst_changed_handle_mutex);
+    if (tracked_handle) {
+      *tracked_handle = handle;
+    }
+  };
+  auto close_tracked_handle = [this](HINTERNET* handle,
+                                     void** tracked_handle) {
+    if (!handle || !*handle) {
+      return;
+    }
+    HINTERNET handle_to_close = *handle;
+    bool should_close = true;
+    {
+      std::lock_guard<std::mutex> lock(m_ai_inst_changed_handle_mutex);
+      if (tracked_handle && *tracked_handle == handle_to_close) {
+        *tracked_handle = nullptr;
+      } else if (tracked_handle) {
+        should_close = false;
+      }
+    }
+    if (should_close) {
+      WinHttpCloseHandle(handle_to_close);
+    }
+    *handle = nullptr;
+  };
+
+  const auto ping_packet = BuildMqttPingReqPacket();
+  while (!m_ai_inst_changed_stop.load()) {
+    HINTERNET session = nullptr;
+    HINTERNET connection = nullptr;
+    HINTERNET request = nullptr;
+    HINTERNET websocket = nullptr;
+
+    session = WinHttpOpen(L"WeaselAIAssistantInstructionChanged/1.0",
+                          WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                          WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) {
+      if (wait_before_reconnect()) {
+        break;
+      }
+      continue;
+    }
+    set_tracked_handle(&m_ai_inst_changed_session_handle, session);
+    if (m_ai_inst_changed_stop.load()) {
+      close_tracked_handle(&session, &m_ai_inst_changed_session_handle);
+      break;
+    }
+    WinHttpSetTimeouts(session, 5000, 5000, 5000, 1000);
+
+    connection = WinHttpConnect(session, ws_url.host.c_str(), ws_url.port, 0);
+    if (!connection) {
+      close_tracked_handle(&session, &m_ai_inst_changed_session_handle);
+      if (wait_before_reconnect()) {
+        break;
+      }
+      continue;
+    }
+    set_tracked_handle(&m_ai_inst_changed_connection_handle, connection);
+    if (m_ai_inst_changed_stop.load()) {
+      close_tracked_handle(&connection, &m_ai_inst_changed_connection_handle);
+      close_tracked_handle(&session, &m_ai_inst_changed_session_handle);
+      break;
+    }
+
+    const DWORD open_flags = ws_url.secure ? WINHTTP_FLAG_SECURE : 0;
+    request = WinHttpOpenRequest(connection, L"GET", ws_url.path.c_str(),
+                                 nullptr, WINHTTP_NO_REFERER,
+                                 WINHTTP_DEFAULT_ACCEPT_TYPES, open_flags);
+    if (!request) {
+      close_tracked_handle(&connection, &m_ai_inst_changed_connection_handle);
+      close_tracked_handle(&session, &m_ai_inst_changed_session_handle);
+      if (wait_before_reconnect()) {
+        break;
+      }
+      continue;
+    }
+    set_tracked_handle(&m_ai_inst_changed_request_handle, request);
+    if (m_ai_inst_changed_stop.load()) {
+      close_tracked_handle(&request, &m_ai_inst_changed_request_handle);
+      close_tracked_handle(&connection, &m_ai_inst_changed_connection_handle);
+      close_tracked_handle(&session, &m_ai_inst_changed_session_handle);
+      break;
+    }
+
+    if (!WinHttpSetOption(request, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET,
+                          nullptr, 0)) {
+      close_tracked_handle(&request, &m_ai_inst_changed_request_handle);
+      close_tracked_handle(&connection, &m_ai_inst_changed_connection_handle);
+      close_tracked_handle(&session, &m_ai_inst_changed_session_handle);
+      if (wait_before_reconnect()) {
+        break;
+      }
+      continue;
+    }
+    WinHttpAddRequestHeaders(request, L"Sec-WebSocket-Protocol: mqtt", -1,
+                             WINHTTP_ADDREQ_FLAG_ADD);
+
+    if (!WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                            WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+        !WinHttpReceiveResponse(request, nullptr)) {
+      close_tracked_handle(&request, &m_ai_inst_changed_request_handle);
+      close_tracked_handle(&connection, &m_ai_inst_changed_connection_handle);
+      close_tracked_handle(&session, &m_ai_inst_changed_session_handle);
+      if (wait_before_reconnect()) {
+        break;
+      }
+      continue;
+    }
+
+    websocket = WinHttpWebSocketCompleteUpgrade(request, 0);
+    close_tracked_handle(&request, &m_ai_inst_changed_request_handle);
+    if (!websocket) {
+      close_tracked_handle(&connection, &m_ai_inst_changed_connection_handle);
+      close_tracked_handle(&session, &m_ai_inst_changed_session_handle);
+      if (wait_before_reconnect()) {
+        break;
+      }
+      continue;
+    }
+    set_tracked_handle(&m_ai_inst_changed_websocket_handle, websocket);
+    if (m_ai_inst_changed_stop.load()) {
+      close_tracked_handle(&websocket, &m_ai_inst_changed_websocket_handle);
+      close_tracked_handle(&connection, &m_ai_inst_changed_connection_handle);
+      close_tracked_handle(&session, &m_ai_inst_changed_session_handle);
+      break;
+    }
+
+    const std::string transport_client_id = GenerateRandomMqttClientId();
+    const auto connect_packet = BuildMqttConnectPacket(
+        transport_client_id, config.mqtt_username, config.mqtt_password, 30);
+    if (!SendWebSocketBinaryMessage(websocket, connect_packet)) {
+      close_tracked_handle(&websocket, &m_ai_inst_changed_websocket_handle);
+      close_tracked_handle(&connection, &m_ai_inst_changed_connection_handle);
+      close_tracked_handle(&session, &m_ai_inst_changed_session_handle);
+      if (wait_before_reconnect()) {
+        break;
+      }
+      continue;
+    }
+
+    std::vector<uint8_t> packet;
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    bool connack_ok = false;
+    while (!m_ai_inst_changed_stop.load() &&
+           std::chrono::steady_clock::now() < deadline) {
+      const auto receive_result =
+          ReceiveWebSocketBinaryMessage(websocket, &packet);
+      if (receive_result == WebSocketReceiveResult::kTimeout) {
+        continue;
+      }
+      if (receive_result != WebSocketReceiveResult::kOk) {
+        break;
+      }
+      if (IsMqttConnAckOk(packet)) {
+        connack_ok = true;
+        break;
+      }
+    }
+    if (!connack_ok) {
+      close_tracked_handle(&websocket, &m_ai_inst_changed_websocket_handle);
+      close_tracked_handle(&connection, &m_ai_inst_changed_connection_handle);
+      close_tracked_handle(&session, &m_ai_inst_changed_session_handle);
+      if (wait_before_reconnect()) {
+        break;
+      }
+      continue;
+    }
+
+    const auto subscribe_packet =
+        BuildMqttSubscribePacket(config.mqtt_ins_changed_topic, 1);
+    if (!SendWebSocketBinaryMessage(websocket, subscribe_packet)) {
+      close_tracked_handle(&websocket, &m_ai_inst_changed_websocket_handle);
+      close_tracked_handle(&connection, &m_ai_inst_changed_connection_handle);
+      close_tracked_handle(&session, &m_ai_inst_changed_session_handle);
+      if (wait_before_reconnect()) {
+        break;
+      }
+      continue;
+    }
+
+    LOG(INFO) << "AI instruction changed listener subscribed: "
+              << config.mqtt_ins_changed_topic;
+
+    auto last_activity = std::chrono::steady_clock::now();
+    auto last_ping = last_activity;
+    while (!m_ai_inst_changed_stop.load()) {
+      const auto now = std::chrono::steady_clock::now();
+      if (now - last_activity >= std::chrono::seconds(20) &&
+          now - last_ping >= std::chrono::seconds(20)) {
+        if (!SendWebSocketBinaryMessage(websocket, ping_packet)) {
+          break;
+        }
+        last_ping = now;
+      }
+
+      const auto receive_result =
+          ReceiveWebSocketBinaryMessage(websocket, &packet);
+      if (receive_result == WebSocketReceiveResult::kTimeout) {
+        continue;
+      }
+      if (receive_result != WebSocketReceiveResult::kOk) {
+        break;
+      }
+
+      last_activity = std::chrono::steady_clock::now();
+      if (IsMqttPingResp(packet)) {
+        continue;
+      }
+      if (MqttPacketType(packet) != 3) {
+        continue;
+      }
+
+      std::string topic;
+      std::string payload;
+      if (!ParseMqttPublishPacket(packet, &topic, &payload)) {
+        continue;
+      }
+
+      bool should_refresh = false;
+      std::string instruction_id;
+      if (TryExtractInstructionIdFromChangedTopic(
+              config.mqtt_ins_changed_topic, topic, &instruction_id)) {
+        AIPanelInstitutionOption option;
+        if (m_ai_instructions.FindById(u8tow(instruction_id), &option)) {
+          LOG(INFO) << "AI instruction changed topic hit cached id="
+                    << instruction_id;
+          should_refresh = true;
+        } else {
+          DLOG(INFO) << "AI instruction changed topic miss cache, id="
+                     << instruction_id;
+        }
+      } else {
+        DLOG(INFO) << "AI instruction changed topic ignored: " << topic;
+      }
+
+      if (!should_refresh && TrimAsciiWhitespace(payload) == "ins_changed") {
+        LOG(INFO) << "AI instruction changed payload received.";
+        should_refresh = true;
+      }
+
+      if (!should_refresh) {
+        continue;
+      }
+
+      _RefreshAIAssistantInstructionCacheAsync();
+
+      bool panel_open = false;
+      {
+        std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
+        panel_open = m_ai_panel.panel_hwnd && IsWindow(m_ai_panel.panel_hwnd) &&
+                     IsWindowVisible(m_ai_panel.panel_hwnd);
+      }
+      if (panel_open) {
+        _RefreshAIPanelInstitutionOptions();
+      }
+    }
+
+    close_tracked_handle(&websocket, &m_ai_inst_changed_websocket_handle);
+    close_tracked_handle(&connection, &m_ai_inst_changed_connection_handle);
+    close_tracked_handle(&session, &m_ai_inst_changed_session_handle);
+
+    if (wait_before_reconnect()) {
+      break;
+    }
+  }
 }
 
 bool RimeWithWeaselHandler::_TryProcessAIAssistantTrigger(KeyEvent keyEvent,

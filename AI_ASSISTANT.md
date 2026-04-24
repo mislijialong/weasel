@@ -46,12 +46,13 @@ ai_assistant:
   refresh_token_endpoint: ""
   mqtt_url: "wss://copilot.sino-bridge.com:85/mqttSocket/mqtt"
   mqtt_topic_template: "/mqtt/topic/sino/lamp/oauth/token/login/{uuid}"
+  mqtt_ins_changed_topic: "/mqtt/topic/sino/langwell/ins/ins/changed/+"
   mqtt_username: ""
   mqtt_password: ""
   mqtt_timeout_ms: 120000
 
-  panel_url: "https://copilot.sino-bridge.com/toolbox/#/rime-with-weasel"
-  panel_allowed_origin: "https://copilot.sino-bridge.com"
+  panel_url: "https://copilot.sino-bridge.com:85/toolbox/#/rime-with-weasel"
+  panel_allowed_origin: "https://copilot.sino-bridge.com:85"
 
   max_history_chars: 2048
   timeout_ms: 30000
@@ -70,6 +71,8 @@ ai_assistant:
 - `ai_api_base`：内联 AI 请求基地址，提交时会拼成 `/chat-messages`。
 - `login_required` / `login_url` / `login_state_path` / `login_token_key`：登录流程相关配置。
 - `refresh_token_endpoint`：刷新 token 接口；留空时会根据登录地址推导候选刷新地址。
+- `mqtt_topic_template`：登录回调监听的 MQTT topic 模板。
+- `mqtt_ins_changed_topic`：AI 指令变更监听 topic，默认订阅 `/mqtt/topic/sino/langwell/ins/ins/changed/+`，命中本地缓存 id 时刷新指令缓存。
 - `mqtt_*`：扫码登录/消息通知相关配置。
 - `panel_url`：React 面板地址。
 - `panel_allowed_origin`：允许和 Host 通信的前端源；为空时会从 `panel_url` 推导。
@@ -152,16 +155,6 @@ window.chrome?.webview?.postMessage(JSON.stringify({
   payload: { text: finalText }
 }))
 ```
-
-### 已下线配置
-
-下面这些旧 Host 直连生成配置已经下线，不要再配置：
-
-- `ai_assistant/stream`
-- `ai_assistant/endpoint`
-- `ai_assistant/api_key`
-- `ai_assistant/model`
-- `ai_assistant/reasoning_effort`
 
 ### 已知限制
 

@@ -66,6 +66,7 @@ struct AIAssistantConfig {
         refresh_token_endpoint(),
         mqtt_url(),
         mqtt_topic_template("/mqtt/topic/sino/lamp/oauth/token/login/{uuid}"),
+        mqtt_ins_changed_topic("/mqtt/topic/sino/langwell/ins/ins/changed/+"),
         mqtt_username(),
         mqtt_password(),
         mqtt_timeout_ms(120000),
@@ -89,6 +90,7 @@ struct AIAssistantConfig {
   std::string refresh_token_endpoint;
   std::string mqtt_url;
   std::string mqtt_topic_template;
+  std::string mqtt_ins_changed_topic;
   std::string mqtt_username;
   std::string mqtt_password;
   int mqtt_timeout_ms;
@@ -304,6 +306,9 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   bool _IsAIAssistantLoggedIn();
   void _StopAIAssistantLoginFlow();
   void _RunAIAssistantLoginListener(const std::string& client_id);
+  void _StartAIAssistantInstructionChangedListener();
+  void _StopAIAssistantInstructionChangedListener();
+  void _RunAIAssistantInstructionChangedListener();
   void _RefreshAIAssistantInstructionCacheAsync();
   bool _RefreshAIAssistantInstructionCacheSync(std::string* error_message,
                                                int* http_status_code);
@@ -438,9 +443,16 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   InputContentStore m_input_content_store;
   std::string m_input_active_context_key;
   std::thread m_ai_login_thread;
+  std::thread m_ai_inst_changed_thread;
   std::mutex m_ai_login_mutex;
+  std::mutex m_ai_inst_changed_handle_mutex;
   std::atomic<bool> m_ai_login_pending;
   std::atomic<bool> m_ai_login_stop;
+  std::atomic<bool> m_ai_inst_changed_stop;
+  void* m_ai_inst_changed_session_handle;
+  void* m_ai_inst_changed_connection_handle;
+  void* m_ai_inst_changed_request_handle;
+  void* m_ai_inst_changed_websocket_handle;
   std::string m_ai_login_token;
   std::string m_ai_login_tenant_id;
   std::string m_ai_login_refresh_token;

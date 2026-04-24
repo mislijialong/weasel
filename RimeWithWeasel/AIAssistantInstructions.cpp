@@ -81,6 +81,7 @@ std::vector<AIPanelInstitutionOption> SnapshotBuiltinAIAssistantInstructions() {
 void AIAssistantInstructions::Clear() {
   std::lock_guard<std::mutex> lock(mutex_);
   options_.clear();
+  index_by_id_.clear();
   index_by_name_.clear();
 }
 
@@ -88,8 +89,13 @@ void AIAssistantInstructions::Replace(
     std::vector<AIPanelInstitutionOption> options) {
   std::lock_guard<std::mutex> lock(mutex_);
   options_ = std::move(options);
+  index_by_id_.clear();
   index_by_name_.clear();
   for (size_t i = 0; i < options_.size(); ++i) {
+    const std::wstring& id = options_[i].id;
+    if (!id.empty() && index_by_id_.find(id) == index_by_id_.end()) {
+      index_by_id_[id] = i;
+    }
     const std::wstring name = NormalizeName(options_[i].name);
     if (!name.empty() && index_by_name_.find(name) == index_by_name_.end()) {
       index_by_name_[name] = i;
@@ -106,6 +112,23 @@ std::vector<AIPanelInstitutionOption> AIAssistantInstructions::Snapshot()
     const {
   std::lock_guard<std::mutex> lock(mutex_);
   return options_;
+}
+
+bool AIAssistantInstructions::FindById(const std::wstring& id,
+                                       AIPanelInstitutionOption* option) const {
+  if (id.empty()) {
+    return false;
+  }
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto it = index_by_id_.find(id);
+  if (it == index_by_id_.end() || it->second >= options_.size()) {
+    return false;
+  }
+  if (option) {
+    *option = options_[it->second];
+  }
+  return true;
 }
 
 bool AIAssistantInstructions::MatchExactName(
