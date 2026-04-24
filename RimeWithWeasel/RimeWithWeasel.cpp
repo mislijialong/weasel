@@ -2918,13 +2918,6 @@ bool FetchAIAssistantInstitutionOptions(
         }
         add_unique_endpoint(
             origin + L"/langwell-api/langwell-ins-server/client/acct/ins/list");
-        if (port == 85) {
-          const std::wstring alt_origin = BuildHttpOrigin(
-              scheme, host, static_cast<INTERNET_PORT>(84));
-          add_unique_endpoint(
-              alt_origin +
-              L"/langwell-api/langwell-ins-server/client/acct/ins/list");
-        }
       };
 
   add_candidates_from_url(u8tow(config.panel_url));
