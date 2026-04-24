@@ -150,7 +150,12 @@ constexpr char kDefaultSystemCommandInputPrefix[] = "sc";
 constexpr char kDefaultInstructionLookupInputPrefix[] = "sS";
 constexpr char kDefaultAIAssistantInstructionChangedTopic[] =
     "/mqtt/topic/sino/langwell/ins/ins/changed/+";
-constexpr INTERNET_PORT kAIAssistantUserInfoEndpointPort = 85;
+constexpr char kAIAssistantPermissionUpdateTopicPrefixObjectKey[] =
+    "mqtt-topic-prefix";
+constexpr char kAIAssistantPermissionUpdateTopicPrefixMemberKey[] =
+    "app-ins-upd";
+constexpr char kDefaultAIAssistantPermissionUpdateTopicPrefix[] =
+    "/mqtt/topic/sino/lamp/app:ins/permission/update";
 constexpr const char* kAllowedSystemCommandIds[] = {
     "jsq",       "calc",     "notepad",   "mspaint", "explorer",
     "txt",       "md",       "gh",        "bd",      "wb",
@@ -1999,6 +2004,24 @@ bool IsAIAssistantTriggerKey(const AIAssistantConfig& config,
   return IsAiHotkeyMatch(config.trigger_binding, key_event);
 }
 
+bool ShouldLogAIAssistantTriggerProbe(const AIAssistantConfig& config,
+                                      const KeyEvent& key_event) {
+  if (!config.enabled) {
+    return false;
+  }
+  if (key_event.mask & ibus::CONTROL_MASK) {
+    return true;
+  }
+  if (key_event.keycode == config.trigger_binding.keycode) {
+    return true;
+  }
+  if (config.trigger_binding.keycode == '3' &&
+      (key_event.keycode == '3' || key_event.keycode == '#')) {
+    return true;
+  }
+  return false;
+}
+
 bool IsCtrlSpaceToggleKey(const KeyEvent& key_event) {
   if (key_event.keycode != ibus::space) {
     return false;
@@ -2165,7 +2188,9 @@ fs::path FindLatestRimeInfoLogFileForCurrentProcess(const fs::path& log_dir) {
   return latest_file;
 }
 
-void AppendInputContentInfoLogLine(const std::string& message) {
+void AppendDedicatedInfoLogLine(const std::wstring& file_name,
+                                const std::wstring& fallback_file_name,
+                                const std::string& message) {
   std::unique_lock<std::mutex> lock(g_input_content_log_mutex, std::try_to_lock);
   if (!lock.owns_lock()) {
     return;
@@ -2173,8 +2198,7 @@ void AppendInputContentInfoLogLine(const std::string& message) {
   const fs::path log_dir = WeaselLogPath();
   std::error_code ec;
   fs::create_directories(log_dir, ec);
-  const fs::path dedicated_log_file =
-      log_dir / L"rime.weasel.input_content.INFO.log";
+  const fs::path dedicated_log_file = log_dir / file_name;
   SYSTEMTIME st = {0};
   GetLocalTime(&st);
   char time_buffer[64] = {0};
@@ -2191,9 +2215,18 @@ void AppendInputContentInfoLogLine(const std::string& message) {
   if (temp_len == 0 || temp_len >= _countof(temp_path)) {
     return;
   }
-  const fs::path fallback_path =
-      fs::path(temp_path) / L"weasel_input_content_fallback.log";
+  const fs::path fallback_path = fs::path(temp_path) / fallback_file_name;
   AppendLineToFile(fallback_path, line);
+}
+
+void AppendInputContentInfoLogLine(const std::string& message) {
+  AppendDedicatedInfoLogLine(L"rime.weasel.input_content.INFO.log",
+                             L"weasel_input_content_fallback.log", message);
+}
+
+void AppendAIAssistantInfoLogLine(const std::string& message) {
+  AppendDedicatedInfoLogLine(L"rime.weasel.ai_assistant.INFO.log",
+                             L"weasel_ai_assistant_fallback.log", message);
 }
 
 std::wstring ResolveAIAssistantLoginStatePath(const AIAssistantConfig& config) {
@@ -2262,6 +2295,98 @@ std::string TrimAsciiWhitespace(const std::string& input) {
     --last;
   }
   return input.substr(first, last - first);
+}
+
+bool DecodeBase64String(const std::string& input, std::string* output) {
+  if (!output) {
+    return false;
+  }
+  output->clear();
+
+  static const std::string kAlphabet =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  int value = 0;
+  int bit_count = -8;
+  for (unsigned char ch : input) {
+    if (std::isspace(ch)) {
+      continue;
+    }
+    if (ch == '=') {
+      break;
+    }
+    const size_t alphabet_index = kAlphabet.find(static_cast<char>(ch));
+    if (alphabet_index == std::string::npos) {
+      return false;
+    }
+    value = (value << 6) + static_cast<int>(alphabet_index);
+    bit_count += 6;
+    if (bit_count >= 0) {
+      output->push_back(static_cast<char>((value >> bit_count) & 0xff));
+      bit_count -= 8;
+    }
+  }
+  return true;
+}
+
+bool DecodeObfuscatedJsonString(const std::string& base64_text,
+                                rapidjson::Document* document,
+                                std::string* error_message) {
+  if (!document) {
+    if (error_message) {
+      *error_message = "Decoded config document is null.";
+    }
+    return false;
+  }
+  document->SetObject();
+  if (base64_text.empty()) {
+    if (error_message) {
+      *error_message = "Config payload is empty.";
+    }
+    return false;
+  }
+
+  std::string decoded_bytes;
+  if (!DecodeBase64String(base64_text, &decoded_bytes)) {
+    if (error_message) {
+      *error_message = "Config payload base64 decode failed.";
+    }
+    return false;
+  }
+
+  const std::wstring decoded_text = u8tow(decoded_bytes);
+  if (decoded_text.empty() && !decoded_bytes.empty()) {
+    if (error_message) {
+      *error_message = "Config payload UTF-8 decode failed.";
+    }
+    return false;
+  }
+
+  std::wstring reversed_text(decoded_text.rbegin(), decoded_text.rend());
+  std::wstring original_text;
+  original_text.reserve(reversed_text.size());
+  for (wchar_t ch : reversed_text) {
+    const unsigned int code_point = static_cast<unsigned int>(ch);
+    if (code_point < 120U) {
+      if (error_message) {
+        *error_message = "Config payload character decode failed.";
+      }
+      return false;
+    }
+    original_text.push_back(static_cast<wchar_t>(code_point - 120U));
+  }
+
+  const std::string json_utf8 = wtou8(original_text);
+  AppendAIAssistantInfoLogLine("AI front-end config decoded data: " +
+                               json_utf8);
+  LOG(INFO) << "AI front-end config decoded data: " << json_utf8;
+  document->Parse(json_utf8.c_str(), json_utf8.size());
+  if (document->HasParseError() || !document->IsObject()) {
+    if (error_message) {
+      *error_message = "Decoded config payload is not valid JSON.";
+    }
+    return false;
+  }
+  return true;
 }
 
 std::string GenerateRandomMqttClientId() {
@@ -2920,6 +3045,7 @@ bool FetchAIAssistantInstitutionOptions(
             origin + L"/langwell-api/langwell-ins-server/client/acct/ins/list");
       };
 
+  add_candidates_from_url(u8tow(config.official_url));
   add_candidates_from_url(u8tow(config.panel_url));
   add_candidates_from_url(u8tow(config.login_url));
   add_candidates_from_url(u8tow(config.refresh_token_endpoint));
@@ -3384,6 +3510,78 @@ bool RefreshAIAssistantUserInfoCache(const AIAssistantConfig& config,
   return true;
 }
 
+bool FetchAIAssistantPermissionUpdateTopicPrefix(
+    const AIAssistantConfig& config,
+    const std::string& token,
+    const std::string& tenant_id,
+    std::string* topic_prefix,
+    std::string* error_message);
+
+std::string BuildAIAssistantPermissionUpdateTopic(
+    const std::string& topic_prefix,
+    const std::string& user_id,
+    const std::string& tenant_id) {
+  const std::string normalized_prefix = TrimAsciiWhitespace(topic_prefix);
+  if (normalized_prefix.empty() || user_id.empty() || tenant_id.empty()) {
+    return std::string();
+  }
+
+  std::string topic = normalized_prefix;
+  if (topic.back() != '/') {
+    topic.push_back('/');
+  }
+  topic += user_id;
+  topic.push_back('/');
+  topic += tenant_id;
+  return topic;
+}
+
+bool ResolveAIAssistantPermissionUpdateTopic(
+    const AIAssistantConfig& config,
+    const std::string& token,
+    const std::string& tenant_id,
+    std::string* topic,
+    std::string* error_message) {
+  if (!topic) {
+    if (error_message) {
+      *error_message = "Permission update topic output is null.";
+    }
+    return false;
+  }
+  topic->clear();
+  if (tenant_id.empty()) {
+    if (error_message) {
+      *error_message = "Permission update tenant id is empty.";
+    }
+    return false;
+  }
+
+  std::string user_id;
+  if (!LoadAIAssistantCachedUserId(config, &user_id) || user_id.empty()) {
+    if (error_message) {
+      *error_message = "Permission update user id is unavailable.";
+    }
+    return false;
+  }
+
+  std::string topic_prefix;
+  if (!FetchAIAssistantPermissionUpdateTopicPrefix(config, token, tenant_id,
+                                                   &topic_prefix,
+                                                   error_message)) {
+    return false;
+  }
+
+  *topic = BuildAIAssistantPermissionUpdateTopic(topic_prefix, user_id,
+                                                 tenant_id);
+  if (topic->empty()) {
+    if (error_message) {
+      *error_message = "Permission update topic build failed.";
+    }
+    return false;
+  }
+  return true;
+}
+
 std::wstring UrlEncodeQueryComponent(const std::string& input) {
   static const wchar_t kHex[] = L"0123456789ABCDEF";
   std::wstring output;
@@ -3554,9 +3752,6 @@ std::wstring BuildHttpOrigin(const std::wstring& scheme,
 }
 
 std::wstring ResolveAIPanelAllowedOrigin(const AIAssistantConfig& config) {
-  if (!config.panel_allowed_origin.empty()) {
-    return u8tow(config.panel_allowed_origin);
-  }
   if (config.panel_url.empty()) {
     return std::wstring();
   }
@@ -3885,14 +4080,7 @@ void AddRefreshEndpointCandidatesFromUrl(const std::wstring& url,
   if (origin.empty()) {
     return;
   }
-  AddUniqueEndpoint(endpoints, origin + L"/api/oauth/anyTenant/refresh");
   AddUniqueEndpoint(endpoints, origin + L"/lamp-api/oauth/anyTenant/refresh");
-  if (port == 85) {
-    const std::wstring alt_origin =
-        BuildHttpOrigin(scheme, host, static_cast<INTERNET_PORT>(84));
-    AddUniqueEndpoint(endpoints,
-                      alt_origin + L"/api/oauth/anyTenant/refresh");
-  }
 }
 
 std::vector<std::wstring> BuildRefreshTokenEndpointCandidates(
@@ -3900,6 +4088,12 @@ std::vector<std::wstring> BuildRefreshTokenEndpointCandidates(
   std::vector<std::wstring> endpoints;
   if (!config.refresh_token_endpoint.empty()) {
     AddUniqueEndpoint(&endpoints, u8tow(config.refresh_token_endpoint));
+  }
+  if (!config.official_url.empty()) {
+    AddRefreshEndpointCandidatesFromUrl(u8tow(config.official_url), &endpoints);
+  }
+  if (!config.panel_url.empty()) {
+    AddRefreshEndpointCandidatesFromUrl(u8tow(config.panel_url), &endpoints);
   }
   if (!config.login_url.empty()) {
     AddRefreshEndpointCandidatesFromUrl(u8tow(config.login_url), &endpoints);
@@ -3919,7 +4113,6 @@ void AddAIAssistantUserInfoEndpointCandidatesFromUrl(
   if (!ParseHttpUrlOrigin(url, &scheme, &host, &port)) {
     return;
   }
-  port = kAIAssistantUserInfoEndpointPort;
   const std::wstring origin = BuildHttpOrigin(scheme, host, port);
   if (origin.empty()) {
     return;
@@ -3928,9 +4121,30 @@ void AddAIAssistantUserInfoEndpointCandidatesFromUrl(
                     origin + L"/lamp-api/oauth/anyone/getUserInfoById");
 }
 
+void AddAIAssistantFrontEndConfigEndpointCandidatesFromUrl(
+    const std::wstring& url,
+    std::vector<std::wstring>* endpoints) {
+  if (!endpoints) {
+    return;
+  }
+  std::wstring scheme;
+  std::wstring host;
+  INTERNET_PORT port = 0;
+  if (!ParseHttpUrlOrigin(url, &scheme, &host, &port)) {
+    return;
+  }
+  const std::wstring origin = BuildHttpOrigin(scheme, host, port);
+  if (origin.empty()) {
+    return;
+  }
+  AddUniqueEndpoint(endpoints, origin + L"/lamp-api/frontEndConfig/getConfig");
+}
+
 std::vector<std::wstring> BuildAIAssistantUserInfoEndpointCandidates(
     const AIAssistantConfig& config) {
   std::vector<std::wstring> endpoints;
+  AddAIAssistantUserInfoEndpointCandidatesFromUrl(
+      u8tow(config.official_url), &endpoints);
   AddAIAssistantUserInfoEndpointCandidatesFromUrl(u8tow(config.panel_url),
                                                   &endpoints);
   AddAIAssistantUserInfoEndpointCandidatesFromUrl(u8tow(config.login_url),
@@ -3938,6 +4152,303 @@ std::vector<std::wstring> BuildAIAssistantUserInfoEndpointCandidates(
   AddAIAssistantUserInfoEndpointCandidatesFromUrl(
       u8tow(config.refresh_token_endpoint), &endpoints);
   return endpoints;
+}
+
+std::vector<std::wstring> BuildAIAssistantFrontEndConfigEndpointCandidates(
+    const AIAssistantConfig& config) {
+  std::vector<std::wstring> endpoints;
+  AddAIAssistantFrontEndConfigEndpointCandidatesFromUrl(
+      u8tow(config.official_url), &endpoints);
+  AddAIAssistantFrontEndConfigEndpointCandidatesFromUrl(u8tow(config.panel_url),
+                                                        &endpoints);
+  AddAIAssistantFrontEndConfigEndpointCandidatesFromUrl(u8tow(config.login_url),
+                                                        &endpoints);
+  AddAIAssistantFrontEndConfigEndpointCandidatesFromUrl(
+      u8tow(config.refresh_token_endpoint), &endpoints);
+  return endpoints;
+}
+
+bool TryReadAIAssistantPermissionUpdateTopicPrefix(
+    const rapidjson::Value& value,
+    std::string* topic_prefix) {
+  if (!topic_prefix || !value.IsObject()) {
+    return false;
+  }
+  topic_prefix->clear();
+  const auto topic_prefix_it =
+      value.FindMember(kAIAssistantPermissionUpdateTopicPrefixObjectKey);
+  if (topic_prefix_it != value.MemberEnd() &&
+      topic_prefix_it->value.IsObject()) {
+    ReadStringLikeJsonMember(topic_prefix_it->value,
+                             kAIAssistantPermissionUpdateTopicPrefixMemberKey,
+                             topic_prefix);
+    if (!topic_prefix->empty()) {
+      return true;
+    }
+  }
+
+  const auto assistant_it = value.FindMember("ai-assistant");
+  if (assistant_it != value.MemberEnd() && assistant_it->value.IsObject()) {
+    const auto assistant_topic_prefix_it = assistant_it->value.FindMember(
+        kAIAssistantPermissionUpdateTopicPrefixObjectKey);
+    if (assistant_topic_prefix_it != assistant_it->value.MemberEnd() &&
+        assistant_topic_prefix_it->value.IsObject()) {
+      ReadStringLikeJsonMember(
+          assistant_topic_prefix_it->value,
+          kAIAssistantPermissionUpdateTopicPrefixMemberKey, topic_prefix);
+    }
+  }
+  return !topic_prefix->empty();
+}
+
+bool FetchAIAssistantPermissionUpdateTopicPrefix(
+    const AIAssistantConfig& config,
+    const std::string& token,
+    const std::string& tenant_id,
+    std::string* topic_prefix,
+    std::string* error_message) {
+  if (!topic_prefix) {
+    if (error_message) {
+      *error_message = "Permission update topic prefix output is null.";
+    }
+    return false;
+  }
+  topic_prefix->clear();
+  if (error_message) {
+    error_message->clear();
+  }
+
+  const std::vector<std::wstring> endpoint_candidates =
+      BuildAIAssistantFrontEndConfigEndpointCandidates(config);
+  if (endpoint_candidates.empty()) {
+    if (error_message) {
+      *error_message = "No front-end config endpoint could be resolved.";
+    }
+    return false;
+  }
+
+  std::string endpoint_candidates_log;
+  for (size_t i = 0; i < endpoint_candidates.size(); ++i) {
+    if (i > 0) {
+      endpoint_candidates_log += " | ";
+    }
+    endpoint_candidates_log += wtou8(endpoint_candidates[i]);
+  }
+  LOG(INFO) << "AI front-end config endpoint candidates: "
+            << endpoint_candidates_log;
+
+  std::string last_error = "Front-end config request failed.";
+
+  for (const auto& endpoint : endpoint_candidates) {
+    URL_COMPONENTS parts = {0};
+    parts.dwStructSize = sizeof(parts);
+    parts.dwSchemeLength = static_cast<DWORD>(-1);
+    parts.dwHostNameLength = static_cast<DWORD>(-1);
+    parts.dwUrlPathLength = static_cast<DWORD>(-1);
+    parts.dwExtraInfoLength = static_cast<DWORD>(-1);
+    if (!WinHttpCrackUrl(endpoint.c_str(), 0, 0, &parts)) {
+      last_error = "Unable to parse front-end config endpoint URL.";
+      continue;
+    }
+
+    const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
+    std::wstring object_name =
+        parts.dwUrlPathLength > 0
+            ? std::wstring(parts.lpszUrlPath, parts.dwUrlPathLength)
+            : std::wstring(L"/");
+    if (parts.dwExtraInfoLength > 0) {
+      object_name.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
+    }
+
+    ScopedWinHttpHandle session(
+        WinHttpOpen(L"WeaselAIAssistantFrontEndConfig/1.0",
+                    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+    if (!session.valid()) {
+      last_error = "WinHTTP session creation failed for front-end config.";
+      continue;
+    }
+    WinHttpSetTimeouts(session.get(), config.timeout_ms, config.timeout_ms,
+                       config.timeout_ms, config.timeout_ms);
+
+    ScopedWinHttpHandle connection(
+        WinHttpConnect(session.get(), host.c_str(), parts.nPort, 0));
+    if (!connection.valid()) {
+      last_error = "WinHTTP connection failed for front-end config endpoint.";
+      continue;
+    }
+
+    const DWORD request_flags =
+        parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0;
+    ScopedWinHttpHandle request(
+        WinHttpOpenRequest(connection.get(), L"GET", object_name.c_str(),
+                           nullptr, WINHTTP_NO_REFERER,
+                           WINHTTP_DEFAULT_ACCEPT_TYPES, request_flags));
+    if (!request.valid()) {
+      last_error = "WinHTTP request creation failed for front-end config.";
+      continue;
+    }
+
+    std::wstring headers = L"Accept: application/json\r\n";
+    if (!tenant_id.empty()) {
+      const std::wstring tenant = u8tow(tenant_id);
+      headers += L"TenantId: ";
+      headers += tenant;
+      headers += L"\r\nTenantid: ";
+      headers += tenant;
+      headers += L"\r\n";
+    }
+    if (!token.empty()) {
+      const std::wstring token_text = u8tow(token);
+      headers += L"Token: ";
+      headers += token_text;
+      headers += L"\r\nSA-TOKEN: ";
+      headers += token_text;
+      headers += L"\r\nOVERTOKEN: ";
+      headers += token_text;
+      headers += L"\r\n";
+    }
+    WinHttpAddRequestHeaders(
+        request.get(), headers.c_str(), static_cast<DWORD>(-1),
+        WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+
+    if (!WinHttpSendRequest(request.get(), WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                            WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+        !WinHttpReceiveResponse(request.get(), nullptr)) {
+      last_error = "Sending front-end config request failed.";
+      continue;
+    }
+
+    DWORD status_code = 0;
+    DWORD status_code_size = sizeof(status_code);
+    WinHttpQueryHeaders(request.get(),
+                        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                        WINHTTP_HEADER_NAME_BY_INDEX, &status_code,
+                        &status_code_size, WINHTTP_NO_HEADER_INDEX);
+
+    std::string body;
+    bool read_ok = true;
+    for (;;) {
+      DWORD available = 0;
+      if (!WinHttpQueryDataAvailable(request.get(), &available)) {
+        last_error = "Failed to read front-end config response.";
+        read_ok = false;
+        break;
+      }
+      if (available == 0) {
+        break;
+      }
+      std::string chunk(available, '\0');
+      DWORD downloaded = 0;
+      if (!WinHttpReadData(request.get(), chunk.data(), available,
+                           &downloaded)) {
+        last_error = "Failed while downloading front-end config response.";
+        read_ok = false;
+        break;
+      }
+      chunk.resize(downloaded);
+      body += chunk;
+    }
+    if (!read_ok) {
+      continue;
+    }
+
+    AppendAIAssistantInfoLogLine("AI front-end config response endpoint=" +
+                                 wtou8(endpoint) + " body=" + body);
+    LOG(INFO) << "AI front-end config response endpoint="
+              << wtou8(endpoint) << " body=" << body;
+
+    rapidjson::Document document;
+    document.Parse(body.c_str(), body.size());
+    if (document.HasParseError() || !document.IsObject()) {
+      last_error = "Front-end config response is not valid JSON.";
+      continue;
+    }
+
+    int response_code = 200;
+    std::string response_message;
+    const auto code_it = document.FindMember("code");
+    if (code_it != document.MemberEnd()) {
+      if (code_it->value.IsInt()) {
+        response_code = code_it->value.GetInt();
+      } else if (code_it->value.IsUint()) {
+        response_code = static_cast<int>(code_it->value.GetUint());
+      } else if (code_it->value.IsInt64()) {
+        response_code = static_cast<int>(code_it->value.GetInt64());
+      } else if (code_it->value.IsUint64()) {
+        response_code = static_cast<int>(code_it->value.GetUint64());
+      } else if (code_it->value.IsString()) {
+        response_code = std::atoi(code_it->value.GetString());
+      }
+    }
+
+    const char* message_keys[] = {"msg", "message", "errorMsg", "error"};
+    for (const char* key : message_keys) {
+      const auto message_it = document.FindMember(key);
+      if (message_it != document.MemberEnd() && message_it->value.IsString()) {
+        response_message = message_it->value.GetString();
+        break;
+      }
+    }
+
+    if (status_code < 200 || status_code >= 300) {
+      last_error = !response_message.empty()
+                       ? response_message
+                       : "Front-end config request returned HTTP " +
+                             std::to_string(status_code) + ".";
+      continue;
+    }
+
+    if (response_code != 0 && response_code != 200) {
+      last_error = !response_message.empty()
+                       ? response_message
+                       : "Front-end config response code " +
+                             std::to_string(response_code) + ".";
+      continue;
+    }
+
+    const rapidjson::Value* config_value = nullptr;
+    rapidjson::Document decoded_document;
+    const auto data_it = document.FindMember("data");
+    if (data_it != document.MemberEnd()) {
+      if (data_it->value.IsString()) {
+        std::string decode_error;
+        if (!DecodeObfuscatedJsonString(data_it->value.GetString(),
+                                        &decoded_document, &decode_error)) {
+          last_error = decode_error;
+          continue;
+        }
+        config_value = &decoded_document;
+      } else if (data_it->value.IsObject()) {
+        config_value = &data_it->value;
+      }
+    }
+    if (!config_value) {
+      config_value = &document;
+    }
+
+    std::string parsed_prefix;
+    const bool has_configured_prefix =
+        TryReadAIAssistantPermissionUpdateTopicPrefix(*config_value,
+                                                     &parsed_prefix);
+    parsed_prefix = TrimAsciiWhitespace(parsed_prefix);
+    if (!has_configured_prefix || parsed_prefix.empty()) {
+      parsed_prefix = kDefaultAIAssistantPermissionUpdateTopicPrefix;
+    }
+
+    *topic_prefix = parsed_prefix;
+    AppendAIAssistantInfoLogLine(
+        "AI front-end config resolved topic prefix endpoint=" +
+        wtou8(endpoint) + " prefix=" + parsed_prefix);
+    LOG(INFO) << "AI front-end config resolved topic prefix endpoint="
+              << wtou8(endpoint) << " prefix=" << parsed_prefix;
+    return true;
+  }
+
+  if (error_message) {
+    *error_message = last_error;
+  }
+  return false;
 }
 
 bool ParseRefreshTokenResponse(const std::string& response_body,
@@ -4612,7 +5123,10 @@ void RimeWithWeaselHandler::Initialize() {
   }
 
   RimeConfig config = {NULL};
-  if (rime_api->config_open("weasel", &config)) {
+  const bool config_opened = !!rime_api->config_open("weasel", &config);
+  AppendAIAssistantInfoLogLine(std::string("AI initialize: config_open(weasel)=") +
+                               (config_opened ? "1" : "0"));
+  if (config_opened) {
     _LoadAIAssistantConfig(&config);
     if (m_ui) {
       _UpdateUIStyle(&config, m_ui, true);
@@ -4782,6 +5296,25 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
                                             EatLine eat) {
   DLOG(INFO) << "Process key event: keycode = " << keyEvent.keycode
              << ", mask = " << keyEvent.mask << ", ipc_id = " << ipc_id;
+  if (ShouldLogAIAssistantTriggerProbe(m_ai_config, keyEvent)) {
+    AppendAIAssistantInfoLogLine(
+        "AI trigger probe: keycode=" + std::to_string(keyEvent.keycode) +
+        ", mask=" + std::to_string(keyEvent.mask) +
+        ", ipc_id=" + std::to_string(ipc_id) +
+        ", enabled=" + std::to_string(m_ai_config.enabled ? 1 : 0) +
+        ", trigger_hotkey=" + m_ai_config.trigger_hotkey +
+        ", trigger_keycode=" +
+        std::to_string(m_ai_config.trigger_binding.keycode) +
+        ", trigger_modifiers=" +
+        std::to_string(m_ai_config.trigger_binding.modifiers));
+    LOG(INFO) << "AI trigger probe: keycode=" << keyEvent.keycode
+              << ", mask=" << keyEvent.mask << ", ipc_id=" << ipc_id
+              << ", enabled=" << m_ai_config.enabled
+              << ", trigger_hotkey=" << m_ai_config.trigger_hotkey
+              << ", trigger_keycode=" << m_ai_config.trigger_binding.keycode
+              << ", trigger_modifiers="
+              << m_ai_config.trigger_binding.modifiers;
+  }
   if (m_disabled)
     return FALSE;
   // Let WebView2 handle Escape key for state navigation (select→input→generating)
@@ -5992,8 +6525,8 @@ void RimeWithWeaselHandler::_LoadAIAssistantConfig(RimeConfig* config) {
   ReadConfigString(config, "ai_assistant/debug_dump_path",
                    &m_ai_config.debug_dump_path);
   ReadConfigString(config, "ai_assistant/panel_url", &m_ai_config.panel_url);
-  ReadConfigString(config, "ai_assistant/panel_allowed_origin",
-                   &m_ai_config.panel_allowed_origin);
+  ReadConfigString(config, "ai_assistant/official_url",
+                   &m_ai_config.official_url);
   ReadConfigString(config, "ai_assistant/login_url", &m_ai_config.login_url);
   ReadConfigString(config, "ai_assistant/login_state_path",
                    &m_ai_config.login_state_path);
@@ -6066,6 +6599,24 @@ void RimeWithWeaselHandler::_LoadAIAssistantConfig(RimeConfig* config) {
   m_input_content_store.SetLimits(
       static_cast<size_t>(max(1024, m_ai_config.max_history_chars * 2)),
       64, 16);
+
+  AppendAIAssistantInfoLogLine(
+      "AI config loaded: enabled=" +
+      std::to_string(m_ai_config.enabled ? 1 : 0) +
+      ", login_required=" +
+      std::to_string(m_ai_config.login_required ? 1 : 0) +
+      ", trigger_hotkey=" + m_ai_config.trigger_hotkey +
+      ", trigger_keycode=" +
+      std::to_string(m_ai_config.trigger_binding.keycode) +
+      ", trigger_modifiers=" +
+      std::to_string(m_ai_config.trigger_binding.modifiers) +
+      ", panel_url=" + m_ai_config.panel_url);
+  LOG(INFO) << "AI config loaded: enabled=" << m_ai_config.enabled
+            << ", login_required=" << m_ai_config.login_required
+            << ", trigger_hotkey=" << m_ai_config.trigger_hotkey
+            << ", trigger_keycode=" << m_ai_config.trigger_binding.keycode
+            << ", trigger_modifiers=" << m_ai_config.trigger_binding.modifiers
+            << ", panel_url=" << m_ai_config.panel_url;
 }
 
 void RimeWithWeaselHandler::_StartAIAssistantInstructionChangedListener() {
@@ -6119,6 +6670,26 @@ void RimeWithWeaselHandler::_StopAIAssistantLoginFlow() {
 bool RimeWithWeaselHandler::_IsAIAssistantLoggedIn() {
   if (!m_ai_config.login_required) {
     return true;
+  }
+  {
+    const std::filesystem::path state_path(
+        ResolveAIAssistantLoginStatePath(m_ai_config));
+    std::error_code exists_error;
+    const bool state_exists = std::filesystem::exists(state_path, exists_error);
+    std::lock_guard<std::mutex> lock(m_ai_login_mutex);
+    const bool has_memory_login = !m_ai_login_token.empty() ||
+                                  !m_ai_login_refresh_token.empty() ||
+                                  !m_ai_login_tenant_id.empty();
+    if (!state_exists && has_memory_login) {
+      AppendAIAssistantInfoLogLine(
+          "AI login state file missing, clearing in-memory login state.");
+      LOG(INFO) << "AI login state file missing, clearing in-memory login state.";
+      m_ai_login_token.clear();
+      m_ai_login_tenant_id.clear();
+      m_ai_login_refresh_token.clear();
+      ClearAIAssistantUserInfoCache(m_ai_config);
+      return false;
+    }
   }
   {
     std::lock_guard<std::mutex> lock(m_ai_login_mutex);
@@ -6324,6 +6895,43 @@ bool RimeWithWeaselHandler::_EnsureAIAssistantLogin() {
     return true;
   }
   if (_IsAIAssistantLoggedIn()) {
+    std::string cached_user_id;
+    if (LoadAIAssistantCachedUserId(m_ai_config, &cached_user_id) &&
+        !cached_user_id.empty()) {
+      return true;
+    }
+
+    std::string token;
+    std::string tenant_id;
+    std::string refresh_token;
+    std::string resolve_error;
+    if (!_ResolveAIAssistantLoginState(&token, &tenant_id, &refresh_token,
+                                       &resolve_error)) {
+      LOG(WARNING) << "AI ensure login: unable to resolve login state, error="
+                   << resolve_error;
+      _ForceAIAssistantRelogin();
+      return false;
+    }
+
+    std::string user_info_error;
+    int user_info_status_code = 0;
+    const bool user_info_refreshed = RefreshAIAssistantUserInfoCache(
+        m_ai_config, token, tenant_id, &user_info_error, &user_info_status_code);
+    if (user_info_refreshed) {
+      LOG(INFO) << "AI ensure login: user info cache refreshed on demand.";
+      _StartAIAssistantInstructionChangedListener();
+      return true;
+    }
+
+    if (!user_info_error.empty()) {
+      LOG(WARNING) << "AI ensure login: user info refresh failed: "
+                   << user_info_error;
+    }
+    if (user_info_status_code == 401) {
+      LOG(INFO) << "AI ensure login: auth invalid, restarting login flow.";
+      _ForceAIAssistantRelogin();
+      return false;
+    }
     return true;
   }
   _StartAIAssistantLoginFlow();
@@ -6355,6 +6963,7 @@ bool RimeWithWeaselHandler::_ForceAIAssistantRelogin() {
                  << ", error=" << remove_error.message();
   }
   ClearAIAssistantUserInfoCache(m_ai_config);
+  _StartAIAssistantInstructionChangedListener();
 
   const bool started = _StartAIAssistantLoginFlow();
   if (!started) {
@@ -6642,6 +7251,7 @@ void RimeWithWeaselHandler::_RunAIAssistantLoginListener(
       LOG(WARNING) << "AI user info cache refresh failed: "
                    << user_info_error;
     }
+    _StartAIAssistantInstructionChangedListener();
     _RefreshAIAssistantInstructionCacheAsync();
     HWND panel_hwnd = nullptr;
     {
@@ -6713,6 +7323,39 @@ void RimeWithWeaselHandler::_RunAIAssistantInstructionChangedListener() {
 
   const auto ping_packet = BuildMqttPingReqPacket();
   while (!m_ai_inst_changed_stop.load()) {
+    std::string permission_update_token;
+    std::string permission_update_tenant_id;
+    {
+      std::lock_guard<std::mutex> lock(m_ai_login_mutex);
+      permission_update_token = m_ai_login_token;
+      permission_update_tenant_id = m_ai_login_tenant_id;
+    }
+    if (permission_update_tenant_id.empty()) {
+      std::string persisted_token;
+      std::string persisted_tenant_id;
+      if (LoadAIAssistantLoginIdentity(config, &persisted_token,
+                                       &persisted_tenant_id, nullptr)) {
+        if (permission_update_token.empty()) {
+          permission_update_token = persisted_token;
+        }
+        permission_update_tenant_id = persisted_tenant_id;
+      }
+    }
+
+    std::string permission_update_topic;
+    std::string permission_update_error;
+    if (!permission_update_tenant_id.empty()) {
+      if (ResolveAIAssistantPermissionUpdateTopic(
+              config, permission_update_token, permission_update_tenant_id,
+              &permission_update_topic, &permission_update_error)) {
+        LOG(INFO) << "AI instruction permission update topic resolved: "
+                  << permission_update_topic;
+      } else if (!permission_update_error.empty()) {
+        LOG(INFO) << "AI instruction permission update topic unavailable: "
+                  << permission_update_error;
+      }
+    }
+
     HINTERNET session = nullptr;
     HINTERNET connection = nullptr;
     HINTERNET request = nullptr;
@@ -6866,8 +7509,27 @@ void RimeWithWeaselHandler::_RunAIAssistantInstructionChangedListener() {
       continue;
     }
 
-    LOG(INFO) << "AI instruction changed listener subscribed: "
-              << config.mqtt_ins_changed_topic;
+    std::string subscribed_topics_log = config.mqtt_ins_changed_topic;
+    if (!permission_update_topic.empty()) {
+      const auto permission_subscribe_packet =
+          BuildMqttSubscribePacket(permission_update_topic, 2);
+      if (!SendWebSocketBinaryMessage(websocket,
+                                      permission_subscribe_packet)) {
+        close_tracked_handle(&websocket, &m_ai_inst_changed_websocket_handle);
+        close_tracked_handle(&connection, &m_ai_inst_changed_connection_handle);
+        close_tracked_handle(&session, &m_ai_inst_changed_session_handle);
+        if (wait_before_reconnect()) {
+          break;
+        }
+        continue;
+      }
+      subscribed_topics_log += " | ";
+      subscribed_topics_log += permission_update_topic;
+    }
+    AppendAIAssistantInfoLogLine("AI instruction mqtt subscribed topics: " +
+                                 subscribed_topics_log);
+    LOG(INFO) << "AI instruction mqtt subscribed topics: "
+              << subscribed_topics_log;
 
     auto last_activity = std::chrono::steady_clock::now();
     auto last_ping = last_activity;
@@ -6906,8 +7568,11 @@ void RimeWithWeaselHandler::_RunAIAssistantInstructionChangedListener() {
 
       bool should_refresh = false;
       std::string instruction_id;
-      if (TryExtractInstructionIdFromChangedTopic(
-              config.mqtt_ins_changed_topic, topic, &instruction_id)) {
+      if (!permission_update_topic.empty() && topic == permission_update_topic) {
+        LOG(INFO) << "AI instruction permission update received: " << topic;
+        should_refresh = true;
+      } else if (TryExtractInstructionIdFromChangedTopic(
+                     config.mqtt_ins_changed_topic, topic, &instruction_id)) {
         AIPanelInstitutionOption option;
         if (m_ai_instructions.FindById(u8tow(instruction_id), &option)) {
           LOG(INFO) << "AI instruction changed topic hit cached id="
@@ -6956,25 +7621,45 @@ void RimeWithWeaselHandler::_RunAIAssistantInstructionChangedListener() {
 bool RimeWithWeaselHandler::_TryProcessAIAssistantTrigger(KeyEvent keyEvent,
                                                           WeaselSessionId ipc_id,
                                                           EatLine eat) {
-  if (!IsAIAssistantTriggerKey(m_ai_config, keyEvent)) {
+  const bool hotkey_match = IsAIAssistantTriggerKey(m_ai_config, keyEvent);
+  if (ShouldLogAIAssistantTriggerProbe(m_ai_config, keyEvent) || hotkey_match) {
+    AppendAIAssistantInfoLogLine(
+        "AI trigger decision: hotkey_match=" +
+        std::to_string(hotkey_match ? 1 : 0) +
+        ", keycode=" + std::to_string(keyEvent.keycode) +
+        ", mask=" + std::to_string(keyEvent.mask) +
+        ", panel_url_empty=" +
+        std::to_string(m_ai_config.panel_url.empty() ? 1 : 0));
+    LOG(INFO) << "AI trigger decision: hotkey_match=" << hotkey_match
+              << ", keycode=" << keyEvent.keycode
+              << ", mask=" << keyEvent.mask
+              << ", panel_url_empty=" << m_ai_config.panel_url.empty();
+  }
+  if (!hotkey_match) {
     return false;
   }
+  AppendAIAssistantInfoLogLine("AI trigger matched.");
+  LOG(INFO) << "AI trigger matched.";
   if (m_ai_config.panel_url.empty()) {
     LOG(WARNING) << "AI panel url is empty; skip AI trigger.";
     return false;
   }
   if (keyEvent.mask & ibus::RELEASE_MASK) {
+    AppendAIAssistantInfoLogLine("AI trigger ignored release event.");
+    LOG(INFO) << "AI trigger ignored release event.";
     return true;
   }
   {
     std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
     if (m_ai_panel.panel_hwnd && IsWindow(m_ai_panel.panel_hwnd) &&
         IsWindowVisible(m_ai_panel.panel_hwnd)) {
-      DLOG(INFO) << "AI panel already visible; ignore duplicate trigger.";
+      LOG(INFO) << "AI panel already visible; ignore duplicate trigger.";
       return true;
     }
   }
   if (!_EnsureAIAssistantLogin()) {
+    AppendAIAssistantInfoLogLine("AI trigger paused for login flow.");
+    LOG(INFO) << "AI trigger paused for login flow.";
     return true;
   }
 
@@ -6988,6 +7673,9 @@ bool RimeWithWeaselHandler::_TryProcessAIAssistantTrigger(KeyEvent keyEvent,
     target_hwnd = GetForegroundWindow();
   }
   DLOG(INFO) << "AI assistant: target_hwnd=0x" << std::hex << reinterpret_cast<uintptr_t>(target_hwnd);
+  AppendAIAssistantInfoLogLine("AI trigger opening panel for ipc_id=" +
+                               std::to_string(ipc_id));
+  LOG(INFO) << "AI trigger opening panel for ipc_id=" << ipc_id;
 
   const std::wstring preedit_snapshot = CaptureCurrentPreeditText(session_id);
   std::wstring prefix_commit;
@@ -8415,11 +9103,14 @@ void RimeWithWeaselHandler::_StartInlineInstructionRequest(
             !token.empty() && !tenant_id.empty()) {
           std::string user_info_error;
           int user_info_status_code = 0;
-          if (!RefreshAIAssistantUserInfoCache(request_config, token, tenant_id,
-                                               &user_info_error,
-                                               &user_info_status_code) &&
-              user_info_status_code == 401) {
+          const bool user_info_refreshed = RefreshAIAssistantUserInfoCache(
+              request_config, token, tenant_id, &user_info_error,
+              &user_info_status_code);
+          if (!user_info_refreshed && user_info_status_code == 401) {
             _ForceAIAssistantRelogin();
+          }
+          if (user_info_refreshed) {
+            _StartAIAssistantInstructionChangedListener();
           }
           LoadAIAssistantCachedUserId(request_config, &user_id);
         }

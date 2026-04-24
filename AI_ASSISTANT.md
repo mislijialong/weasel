@@ -51,8 +51,8 @@ ai_assistant:
   mqtt_password: ""
   mqtt_timeout_ms: 120000
 
-  panel_url: "https://copilot.sino-bridge.com:85/toolbox/#/rime-with-weasel"
-  panel_allowed_origin: "https://copilot.sino-bridge.com:85"
+  panel_url: "https://copilot.sino-bridge.com/toolbox/#/rime-with-weasel"
+  official_url: "https://copilot.sino-bridge.com:85"
 
   max_history_chars: 2048
   timeout_ms: 30000
@@ -74,8 +74,8 @@ ai_assistant:
 - `mqtt_topic_template`：登录回调监听的 MQTT topic 模板。
 - `mqtt_ins_changed_topic`：AI 指令变更监听 topic，默认订阅 `/mqtt/topic/sino/langwell/ins/ins/changed/+`，命中本地缓存 id 时刷新指令缓存。
 - `mqtt_*`：扫码登录/消息通知相关配置。
-- `panel_url`：React 面板地址。
-- `panel_allowed_origin`：允许和 Host 通信的前端源；为空时会从 `panel_url` 推导。
+- `panel_url`：React 面板地址；WebView2 前端消息来源校验会直接从这里截取 origin。
+- `official_url`：官方服务根地址，用于拼接用户信息、刷新 token、机构列表、前端配置等后台接口候选地址。
 - `max_history_chars`：收集上下文时保留的最大历史字符数。
 - `timeout_ms`：网络请求超时，登录、用户信息、机构列表、内联 AI 都会用到。
 - `debug_dump_context` / `debug_dump_path`：是否把上下文落盘，便于联调。

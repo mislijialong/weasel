@@ -59,7 +59,7 @@ struct AIAssistantConfig {
         ai_api_base(),
         debug_dump_path("ai_context_dump.txt"),
         panel_url(),
-        panel_allowed_origin(),
+        official_url(),
         login_url(),
         login_state_path("ai_login_state.json"),
         login_token_key("token"),
@@ -83,7 +83,7 @@ struct AIAssistantConfig {
   std::string ai_api_base;
   std::string debug_dump_path;
   std::string panel_url;
-  std::string panel_allowed_origin;
+  std::string official_url;
   std::string login_url;
   std::string login_state_path;
   std::string login_token_key;
