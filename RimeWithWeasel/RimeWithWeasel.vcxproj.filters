@@ -24,6 +24,18 @@
     <ClCompile Include="InputContentStore.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="RimeWithWeasel.AIAuth.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="RimeWithWeasel.AIMqtt.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="RimeWithWeasel.AIShared.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="RimeWithWeasel.InstructionLookup.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="RimeWithWeasel.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -54,6 +66,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\include\WeaselUtility.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="RimeWithWeaselInternal.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
