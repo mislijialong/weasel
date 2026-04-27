@@ -2205,6 +2205,51 @@ UINT NormalizeInlineEditingDigitKeycode(UINT keycode) {
   return keycode;
 }
 
+bool InsertInlineEditingDigitFallback(
+    const KeyEvent& key_event,
+    std::mutex& inline_mutex,
+    std::map<WeaselSessionId, InlineInstructionState>& inline_states,
+    RimeSessionId session_id,
+    WeaselSessionId ipc_id,
+    const std::wstring& prompt_before_key) {
+  const UINT normalized_keycode =
+      NormalizeInlineEditingDigitKeycode(key_event.keycode);
+  if (normalized_keycode < '0' || normalized_keycode > '9' || session_id == 0 ||
+      ipc_id == 0) {
+    return false;
+  }
+
+  if (!CaptureInlineInstructionPromptSource(session_id).empty()) {
+    return false;
+  }
+
+  std::lock_guard<std::mutex> lock(inline_mutex);
+  auto it = inline_states.find(ipc_id);
+  if (it == inline_states.end() ||
+      it->second.phase != InlineInstructionPhase::kEditing ||
+      it->second.prompt_text != prompt_before_key) {
+    return false;
+  }
+
+  InlineInstructionState& state = it->second;
+  state.session_alive = true;
+  state.detached_writeback = false;
+  state.phase = InlineInstructionPhase::kEditing;
+  state.slash_mode = true;
+
+  const wchar_t digit = static_cast<wchar_t>(normalized_keycode);
+  state.committed_prompt_text = state.prompt_text;
+  const size_t cursor_offset =
+      state.cursor_offset < state.committed_prompt_text.size()
+          ? state.cursor_offset
+          : state.committed_prompt_text.size();
+  const size_t cursor_pos = state.committed_prompt_text.size() - cursor_offset;
+  state.committed_prompt_text.insert(cursor_pos, 1, digit);
+  state.prompt_text = state.committed_prompt_text;
+  state.cursor_offset = state.prompt_text.size() - (cursor_pos + 1);
+  return true;
+}
+
 bool TryResolveCandidateSelectIndex(const KeyEvent& key_event,
                                     size_t* index) {
   if (!index || !IsPlainCandidateSelectKey(key_event)) {
@@ -5557,6 +5602,15 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
           keyEvent, m_inline_instruction_mutex, m_inline_instruction_states,
           m_ai_injected_candidates_mutex, m_ai_injected_candidates, session_id,
           ipc_id);
+  std::wstring inline_digit_prompt_before;
+  if (should_consume_inline_digit) {
+    InlineInstructionState inline_state;
+    if (GetInlineInstructionSnapshot(m_inline_instruction_mutex,
+                                     m_inline_instruction_states, ipc_id,
+                                     &inline_state)) {
+      inline_digit_prompt_before = inline_state.prompt_text;
+    }
+  }
   KeyEvent effective_key_event = keyEvent;
   if (should_consume_inline_digit &&
       IsKeypadInlineEditingDigitKey(effective_key_event)) {
@@ -5575,6 +5629,10 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
     return TRUE;
   }
   if (should_consume_inline_digit) {
+    InsertInlineEditingDigitFallback(
+        effective_key_event, m_inline_instruction_mutex,
+        m_inline_instruction_states, session_id, ipc_id,
+        inline_digit_prompt_before);
     _Respond(ipc_id, eat);
     _UpdateUI(ipc_id);
     m_active_session = ipc_id;
