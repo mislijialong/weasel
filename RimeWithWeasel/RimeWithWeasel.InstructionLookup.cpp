@@ -1,5 +1,6 @@
 #include "stdafx.h"
 
+#include <logging.h>
 #include <RimeWithWeasel.h>
 #include <StringAlgorithm.hpp>
 #include <WeaselUtility.h>
@@ -13,6 +14,7 @@
 #include <cwctype>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <mutex>
 #include <set>
 #include <string>
@@ -41,6 +43,88 @@ size_t GetInjectedCandidateVisibleOffset(
     return 0;
   }
   return state.current_page * state.page_size;
+}
+
+bool IsInstructionLookupSystemCommandConfirmKey(
+    const weasel::KeyEvent& key_event) {
+  if (key_event.mask & ibus::RELEASE_MASK) {
+    return false;
+  }
+  return key_event.keycode == ibus::space ||
+         key_event.keycode == ibus::Return ||
+         key_event.keycode == ibus::KP_Enter;
+}
+
+bool IsPlainInstructionLookupCandidateSelectKey(
+    const weasel::KeyEvent& key_event) {
+  if (key_event.mask & ibus::RELEASE_MASK) {
+    return false;
+  }
+  const auto modifiers = key_event.mask & ibus::MODIFIER_MASK;
+  return (modifiers &
+          (ibus::CONTROL_MASK | ibus::ALT_MASK | ibus::SUPER_MASK |
+           ibus::HYPER_MASK | ibus::META_MASK)) == 0;
+}
+
+bool TryResolveInstructionLookupSelectIndex(
+    const weasel::KeyEvent& key_event,
+    size_t* index) {
+  if (!index || !IsPlainInstructionLookupCandidateSelectKey(key_event)) {
+    return false;
+  }
+  if (key_event.keycode >= '1' && key_event.keycode <= '9') {
+    *index = static_cast<size_t>(key_event.keycode - '1');
+    return true;
+  }
+  if (key_event.keycode == '0') {
+    *index = 9;
+    return true;
+  }
+  if (key_event.keycode >= ibus::KP_1 &&
+      key_event.keycode <= ibus::KP_9) {
+    *index = static_cast<size_t>(key_event.keycode - ibus::KP_1);
+    return true;
+  }
+  if (key_event.keycode == ibus::KP_0) {
+    *index = 9;
+    return true;
+  }
+  if (key_event.keycode == ibus::space ||
+      key_event.keycode == ibus::Return ||
+      key_event.keycode == ibus::KP_Enter) {
+    *index = 0;
+    return true;
+  }
+  return false;
+}
+
+bool HasInstructionLookupActiveInlineState(
+    std::mutex& mutex,
+    std::map<WeaselSessionId, InlineInstructionState>& states,
+    WeaselSessionId ipc_id) {
+  if (ipc_id == 0) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(mutex);
+  const auto it = states.find(ipc_id);
+  return it != states.end() && it->second.IsActive();
+}
+
+bool ShouldSuppressInstructionLookupCandidates(
+    std::mutex& inline_mutex,
+    std::map<WeaselSessionId, InlineInstructionState>& inline_states,
+    WeaselSessionId ipc_id,
+    const std::string& instruction_lookup_prefix,
+    const char* input_text) {
+  if (!input_text) {
+    return false;
+  }
+  if (!HasInstructionLookupActiveInlineState(inline_mutex, inline_states,
+                                             ipc_id)) {
+    return false;
+  }
+  return IsInstructionLookupInputText(input_text, instruction_lookup_prefix) ||
+         IsSystemCommandInputText(input_text);
 }
 
 }  // namespace
@@ -815,6 +899,146 @@ bool RimeWithWeaselHandler::_TryBuildInstructionLookupCandidates(
   return true;
 }
 
+bool RimeWithWeaselHandler::_TryResolveInstructionLookupCandidate(
+    size_t candidate_index,
+    bool use_highlighted,
+    WeaselSessionId ipc_id,
+    AIPanelInstitutionOption* option) {
+  if (!option || ipc_id == 0) {
+    return false;
+  }
+
+  RimeApi* rime_api = GetWeaselRimeApi();
+  const RimeSessionId session_id = to_session_id(ipc_id);
+  const char* input_text =
+      rime_api && session_id != 0 ? rime_api->get_input(session_id) : nullptr;
+  if (ShouldSuppressInstructionLookupCandidates(
+          m_inline_instruction_mutex, m_inline_instruction_states, ipc_id,
+          m_ai_config.instruction_lookup_prefix, input_text)) {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    m_ai_injected_candidates.erase(ipc_id);
+    return false;
+  }
+  if (!input_text ||
+      !IsInstructionLookupInputText(input_text,
+                                    m_ai_config.instruction_lookup_prefix)) {
+    return false;
+  }
+
+  RIME_STRUCT(RimeContext, ctx);
+  if (!rime_api || !rime_api->get_context(session_id, &ctx)) {
+    return false;
+  }
+
+  bool matched = false;
+  if (ctx.menu.num_candidates > 0 && ctx.menu.candidates) {
+    size_t resolved_index = candidate_index;
+    if (use_highlighted) {
+      resolved_index = static_cast<size_t>((std::max)(
+          0, (std::min)(ctx.menu.highlighted_candidate_index,
+                        ctx.menu.num_candidates - 1)));
+    }
+    if (resolved_index < static_cast<size_t>(ctx.menu.num_candidates) &&
+        ctx.menu.candidates[resolved_index].text) {
+      matched = _TryMatchAIAssistantInstructionOption(
+          u8tow(ctx.menu.candidates[resolved_index].text), option);
+    }
+  }
+
+  rime_api->free_context(&ctx);
+  return matched;
+}
+
+bool RimeWithWeaselHandler::_TryInjectAIAssistantCandidates(
+    WeaselSessionId ipc_id,
+    RimeContext& ctx,
+    weasel::CandidateInfo* cinfo) {
+  if (!cinfo || !m_ai_config.enabled || ipc_id == 0) {
+    if (ipc_id != 0) {
+      std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+      m_ai_injected_candidates.erase(ipc_id);
+    }
+    return false;
+  }
+  if (HasInstructionLookupActiveInlineState(m_inline_instruction_mutex,
+                                            m_inline_instruction_states,
+                                            ipc_id)) {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    m_ai_injected_candidates.erase(ipc_id);
+    return false;
+  }
+  RimeApi* rime_api = GetWeaselRimeApi();
+  const RimeSessionId session_id = to_session_id(ipc_id);
+  const char* input_text =
+      rime_api && session_id != 0 ? rime_api->get_input(session_id) : nullptr;
+  if (input_text &&
+      IsInstructionLookupInputText(input_text,
+                                   m_ai_config.instruction_lookup_prefix)) {
+    return _TryBuildInstructionLookupCandidates(ipc_id, input_text,
+                                                ctx.menu.page_size, cinfo);
+  }
+  if (ctx.menu.page_no != 0 || ctx.menu.num_candidates <= 0) {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    m_ai_injected_candidates.erase(ipc_id);
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
+    if (m_ai_panel.panel_hwnd && IsWindow(m_ai_panel.panel_hwnd) &&
+        IsWindowVisible(m_ai_panel.panel_hwnd)) {
+      std::lock_guard<std::mutex> injected_lock(m_ai_injected_candidates_mutex);
+      m_ai_injected_candidates.erase(ipc_id);
+      return false;
+    }
+  }
+
+  AIPanelInstitutionOption matched_option;
+  for (int i = 0; i < ctx.menu.num_candidates; ++i) {
+    const char* candidate_text = ctx.menu.candidates[i].text;
+    if (!candidate_text) {
+      continue;
+    }
+    const std::wstring candidate_name = u8tow(candidate_text);
+    if (_TryMatchAIAssistantInstructionOption(candidate_name,
+                                              &matched_option)) {
+      break;
+    }
+    matched_option = AIPanelInstitutionOption();
+  }
+
+  if (matched_option.name.empty()) {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    m_ai_injected_candidates.erase(ipc_id);
+    return false;
+  }
+
+  cinfo->candies.insert(cinfo->candies.begin(),
+                        weasel::Text(escape_string(matched_option.name)));
+  cinfo->comments.insert(
+      cinfo->comments.begin(),
+      weasel::Text(matched_option.IsSystemCommand()
+                       ? L"系统指令"
+                       : (IsBuiltinAIAssistantInstructionId(matched_option.id)
+                              ? L"默认指令"
+                              : L"AI指令")));
+  if (!cinfo->labels.empty()) {
+    cinfo->labels.insert(cinfo->labels.begin(), cinfo->labels.front());
+    for (size_t i = 1; i < cinfo->labels.size(); ++i) {
+      cinfo->labels[i].str = std::to_wstring((i + 1) % 10);
+    }
+  }
+  cinfo->highlighted = 0;
+
+  AIAssistantInjectedCandidateState state;
+  state.options.push_back(matched_option);
+  state.rime_highlighted = ctx.menu.highlighted_candidate_index;
+  {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    m_ai_injected_candidates[ipc_id] = std::move(state);
+  }
+  return true;
+}
+
 bool RimeWithWeaselHandler::_TrySelectInjectedAIAssistantCandidate(
     size_t index,
     WeaselSessionId ipc_id) {
@@ -848,4 +1072,192 @@ bool RimeWithWeaselHandler::_TrySelectInjectedAIAssistantCandidate(
     return _EnterInlineInstructionForOption(ipc_id, option);
   }
   return _OpenAIPanelForInstruction(ipc_id, option);
+}
+
+bool RimeWithWeaselHandler::_TryHandleInstructionLookupCandidateSelectKey(
+    weasel::KeyEvent keyEvent,
+    WeaselSessionId ipc_id,
+    EatLine eat) {
+  if (!m_ai_config.enabled || ipc_id == 0) {
+    return false;
+  }
+
+  RimeApi* rime_api = GetWeaselRimeApi();
+  const RimeSessionId session_id = to_session_id(ipc_id);
+  const char* input_text =
+      rime_api && session_id != 0 ? rime_api->get_input(session_id) : nullptr;
+  if (ShouldSuppressInstructionLookupCandidates(
+          m_inline_instruction_mutex, m_inline_instruction_states, ipc_id,
+          m_ai_config.instruction_lookup_prefix, input_text)) {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    m_ai_injected_candidates.erase(ipc_id);
+    return false;
+  }
+  if (!input_text ||
+      !IsInstructionLookupInputText(input_text,
+                                    m_ai_config.instruction_lookup_prefix)) {
+    return false;
+  }
+
+  if (IsInstructionLookupSystemCommandConfirmKey(keyEvent)) {
+    const bool handled = _TrySelectInjectedAIAssistantCandidate(0, ipc_id);
+    if (handled) {
+      _Respond(ipc_id, eat);
+      _UpdateUI(ipc_id);
+    }
+    return handled;
+  }
+
+  size_t candidate_index = 0;
+  if (!TryResolveInstructionLookupSelectIndex(keyEvent, &candidate_index)) {
+    return false;
+  }
+  AIPanelInstitutionOption option;
+  if (!_TryResolveInstructionLookupCandidate(candidate_index, false,
+                                             ipc_id, &option)) {
+    return false;
+  }
+
+  const bool handled = option.IsSystemCommand()
+                           ? _ExecuteInjectedSystemCommand(ipc_id, option)
+                           : _EnterInlineInstructionForOption(ipc_id, option);
+  if (handled) {
+    _Respond(ipc_id, eat);
+    _UpdateUI(ipc_id);
+  }
+  return handled;
+}
+
+bool RimeWithWeaselHandler::_TryHandleInjectedCandidateSelectKey(
+    weasel::KeyEvent keyEvent,
+    WeaselSessionId ipc_id,
+    EatLine eat) {
+  size_t selected_index = 0;
+  if (!TryResolveInstructionLookupSelectIndex(keyEvent, &selected_index)) {
+    return false;
+  }
+
+  size_t injected_count = 0;
+  bool instruction_lookup_mode = false;
+  {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    const auto it = m_ai_injected_candidates.find(ipc_id);
+    if (it == m_ai_injected_candidates.end()) {
+      return false;
+    }
+    instruction_lookup_mode = it->second.instruction_lookup_mode;
+    injected_count = GetInjectedCandidateVisibleCount(it->second);
+    if (injected_count == 0) {
+      return false;
+    }
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
+    if (m_ai_panel.panel_hwnd && IsWindow(m_ai_panel.panel_hwnd) &&
+        IsWindowVisible(m_ai_panel.panel_hwnd) &&
+        selected_index < injected_count) {
+      return true;
+    }
+  }
+
+  if (selected_index < injected_count) {
+    const bool handled =
+        _TrySelectInjectedAIAssistantCandidate(selected_index, ipc_id);
+    if (handled) {
+      _Respond(ipc_id, eat);
+      _UpdateUI(ipc_id);
+    }
+    return handled;
+  }
+  if (instruction_lookup_mode) {
+    return true;
+  }
+
+  const size_t rime_index = selected_index - injected_count;
+  {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    m_ai_injected_candidates.erase(ipc_id);
+  }
+  RimeApi* rime_api = GetWeaselRimeApi();
+  if (rime_api &&
+      rime_api->select_candidate_on_current_page(to_session_id(ipc_id),
+                                                 rime_index)) {
+    _Respond(ipc_id, eat);
+    _UpdateUI(ipc_id);
+  }
+  return true;
+}
+
+bool RimeWithWeaselHandler::_EnterInlineInstructionForOption(
+    WeaselSessionId ipc_id,
+    const AIPanelInstitutionOption& option) {
+  if (ipc_id == 0 || option.IsSystemCommand()) {
+    return false;
+  }
+  if (option.id.empty() && option.name.empty() &&
+      option.template_content.empty()) {
+    return false;
+  }
+  if (!_EnsureAIAssistantLogin()) {
+    return true;
+  }
+
+  RimeApi* rime_api = GetWeaselRimeApi();
+  const RimeSessionId session_id = to_session_id(ipc_id);
+  if (rime_api) {
+    rime_api->clear_composition(session_id);
+  }
+
+  HWND target_hwnd = GetFocus();
+  if (!target_hwnd || !IsWindow(target_hwnd)) {
+    target_hwnd = GetForegroundWindow();
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(m_ai_injected_candidates_mutex);
+    m_ai_injected_candidates.erase(ipc_id);
+  }
+  {
+    std::lock_guard<std::mutex> lock(m_inline_instruction_mutex);
+    InlineInstructionState& state = m_inline_instruction_states[ipc_id];
+    state.Reset();
+    state.session_alive = true;
+    state.detached_writeback = false;
+    state.phase = InlineInstructionPhase::kEditing;
+    state.slash_mode = true;
+    state.target_hwnd = target_hwnd;
+    state.has_selected_option = true;
+    state.selected_option = option;
+  }
+
+  DLOG(INFO) << "inline_ai: enter from instruction lookup ipc_id=" << ipc_id
+             << " option_id=" << wtou8(option.id)
+             << " option_name=" << wtou8(option.name);
+  return true;
+}
+
+bool RimeWithWeaselHandler::_ExecuteInjectedSystemCommand(
+    WeaselSessionId ipc_id,
+    const AIPanelInstitutionOption& option) {
+  if (!option.IsSystemCommand() || !m_system_command_callback) {
+    return false;
+  }
+
+  const std::string command_id = wtou8(option.system_command_id);
+  if (!IsAllowedSystemCommandId(command_id)) {
+    return false;
+  }
+
+  RimeApi* rime_api = GetWeaselRimeApi();
+  const RimeSessionId session_id = to_session_id(ipc_id);
+  if (rime_api && session_id != 0) {
+    rime_api->clear_composition(session_id);
+  }
+
+  SystemCommandLaunchRequest request;
+  request.command_id = command_id;
+  request.preferred_output_dir = _ReadSystemCommandOutputDir(ipc_id);
+  m_system_command_callback(request);
+  return true;
 }

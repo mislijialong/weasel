@@ -298,8 +298,16 @@ program_files:
   File "data\preview\*.png"
 
   ; merge local rime-ice package into user folder
-  SetOutPath "$APPDATA\Rime"
+  ; prefer configured RimeUserDir so upgrades refresh the active user profile
+  ReadRegStr $R3 HKCU "Software\Rime\Weasel" "RimeUserDir"
+  StrCmp $R3 "" 0 rime_user_dir_ready
+  StrCpy $R3 "$APPDATA\Rime"
+rime_user_dir_ready:
+  CreateDirectory "$R3"
+  SetOutPath "$R3"
+  SetOverwrite on
   File /r /x ".git" /x ".git\*" "..\rime-ice\*"
+  SetOverwrite try
 
   SetOutPath $INSTDIR
 
