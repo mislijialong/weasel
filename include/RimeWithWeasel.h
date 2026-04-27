@@ -302,6 +302,7 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   void _LoadAIAssistantConfig(RimeConfig* config);
   bool _EnsureAIAssistantLogin();
   bool _ForceAIAssistantRelogin();
+  void _ClearAIAssistantLoginStateForLogout(const std::string& reason);
   bool _StartAIAssistantLoginFlow();
   bool _IsAIAssistantLoggedIn();
   void _StopAIAssistantLoginFlow();

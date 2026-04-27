@@ -133,6 +133,7 @@ bool ResolveAIAssistantPermissionUpdateTopic(const AIAssistantConfig& config,
                                              const std::string& tenant_id,
                                              std::string* topic,
                                              std::string* error_message);
+std::string BuildAIAssistantLogoutTopic(const std::string& user_id);
 
 bool LoadAIAssistantCachedUserId(const AIAssistantConfig& config,
                                  std::string* user_id);

@@ -4510,12 +4510,49 @@ bool RimeWithWeaselHandler::_StartAIAssistantLoginFlow() {
   if (!m_ai_config.login_required) {
     return true;
   }
-  if (m_ai_login_pending.load()) {
+
+  auto open_login_url = [](const std::wstring& login_url) {
+    if (login_url.empty()) {
+      LOG(WARNING) << "AI login required but login_url is empty.";
+      return false;
+    }
+    const auto open_result = reinterpret_cast<intptr_t>(
+        ShellExecuteW(nullptr, L"open", login_url.c_str(), nullptr, nullptr,
+                      SW_SHOWNORMAL));
+    if (open_result <= 32) {
+      LOG(WARNING) << "Failed to open login page, code=" << open_result;
+      return false;
+    }
     return true;
+  };
+
+  if (m_ai_login_pending.load()) {
+    std::string pending_client_id;
+    {
+      std::lock_guard<std::mutex> lock(m_ai_login_mutex);
+      pending_client_id = m_ai_login_client_id;
+    }
+    if (!pending_client_id.empty()) {
+      const std::wstring login_url =
+          BuildLoginUrlForBrowser(m_ai_config, pending_client_id);
+      if (!open_login_url(login_url)) {
+        return false;
+      }
+      AppendAIAssistantInfoLogLine(
+          "AI login page reopened, client_id=" + pending_client_id);
+      LOG(INFO) << "AI login page reopened, client_id="
+                << pending_client_id;
+      return true;
+    }
+
+    LOG(WARNING) << "AI login pending without client_id; restarting flow.";
+    m_ai_login_stop.store(true);
   }
+
   if (m_ai_login_thread.joinable()) {
     m_ai_login_thread.join();
   }
+  m_ai_login_pending.store(false);
 
   const std::string client_id = GenerateLoginClientId();
   {
@@ -4524,10 +4561,6 @@ bool RimeWithWeaselHandler::_StartAIAssistantLoginFlow() {
   }
 
   const std::wstring login_url = BuildLoginUrlForBrowser(m_ai_config, client_id);
-  if (login_url.empty()) {
-    LOG(WARNING) << "AI login required but login_url is empty.";
-    return false;
-  }
 
   m_ai_login_stop.store(false);
   if (!m_ai_config.mqtt_url.empty() && !m_ai_config.mqtt_topic_template.empty()) {
@@ -4542,11 +4575,7 @@ bool RimeWithWeaselHandler::_StartAIAssistantLoginFlow() {
         << "login callback listener disabled.";
   }
 
-  const auto open_result = reinterpret_cast<intptr_t>(
-      ShellExecuteW(nullptr, L"open", login_url.c_str(), nullptr, nullptr,
-                    SW_SHOWNORMAL));
-  if (open_result <= 32) {
-    LOG(WARNING) << "Failed to open login page, code=" << open_result;
+  if (!open_login_url(login_url)) {
     return false;
   }
   LOG(INFO) << "AI login started, client_id=" << client_id;
@@ -4635,6 +4664,48 @@ bool RimeWithWeaselHandler::_ForceAIAssistantRelogin() {
     LOG(INFO) << "AI relogin: login flow started by ui.auth.refresh_request.";
   }
   return started;
+}
+
+void RimeWithWeaselHandler::_ClearAIAssistantLoginStateForLogout(
+    const std::string& reason) {
+  _ClearAIAssistantInstructionCache();
+
+  {
+    std::lock_guard<std::mutex> lock(m_ai_login_mutex);
+    m_ai_login_token.clear();
+    m_ai_login_tenant_id.clear();
+    m_ai_login_refresh_token.clear();
+    m_ai_login_client_id.clear();
+  }
+
+  const std::filesystem::path state_path(
+      ResolveAIAssistantLoginStatePath(m_ai_config));
+  std::error_code remove_error;
+  std::filesystem::remove(state_path, remove_error);
+  if (remove_error) {
+    LOG(WARNING) << "AI logout: failed to remove login state file: "
+                 << state_path.u8string()
+                 << ", error=" << remove_error.message();
+  }
+  ClearAIAssistantUserInfoCache(m_ai_config);
+
+  HWND panel_hwnd = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
+    panel_hwnd = m_ai_panel.panel_hwnd;
+    m_ai_panel.institutions_loading = false;
+    m_ai_panel.institution_options.clear();
+    if (!IsBuiltinAIAssistantInstructionId(
+            m_ai_panel.selected_institution_id)) {
+      m_ai_panel.selected_institution_id.clear();
+    }
+  }
+  if (panel_hwnd && IsWindow(panel_hwnd)) {
+    PostMessageW(panel_hwnd, WM_AI_WEBVIEW_SYNC, 0, 0);
+  }
+
+  AppendAIAssistantInfoLogLine("AI logout handled: " + reason);
+  LOG(INFO) << "AI logout handled: " << reason;
 }
 
 void RimeWithWeaselHandler::_ClearAIAssistantInstructionCache() {
@@ -5019,6 +5090,28 @@ void RimeWithWeaselHandler::_RunAIAssistantInstructionChangedListener() {
       }
     }
 
+    std::string logout_user_id;
+    LoadAIAssistantCachedUserId(config, &logout_user_id);
+    if (logout_user_id.empty() && !permission_update_token.empty() &&
+        !permission_update_tenant_id.empty()) {
+      std::string user_info_error;
+      int user_info_status_code = 0;
+      if (RefreshAIAssistantUserInfoCache(config, permission_update_token,
+                                          permission_update_tenant_id,
+                                          &user_info_error,
+                                          &user_info_status_code)) {
+        LoadAIAssistantCachedUserId(config, &logout_user_id);
+      } else if (!user_info_error.empty()) {
+        LOG(INFO) << "AI logout topic user info unavailable: "
+                  << user_info_error;
+      }
+    }
+    const std::string logout_topic =
+        BuildAIAssistantLogoutTopic(logout_user_id);
+    if (!logout_topic.empty()) {
+      LOG(INFO) << "AI logout topic resolved: " << logout_topic;
+    }
+
     HINTERNET session = nullptr;
     HINTERNET connection = nullptr;
     HINTERNET request = nullptr;
@@ -5189,6 +5282,21 @@ void RimeWithWeaselHandler::_RunAIAssistantInstructionChangedListener() {
       subscribed_topics_log += " | ";
       subscribed_topics_log += permission_update_topic;
     }
+    if (!logout_topic.empty()) {
+      const auto logout_subscribe_packet =
+          BuildMqttSubscribePacket(logout_topic, 3);
+      if (!SendWebSocketBinaryMessage(websocket, logout_subscribe_packet)) {
+        close_tracked_handle(&websocket, &m_ai_inst_changed_websocket_handle);
+        close_tracked_handle(&connection, &m_ai_inst_changed_connection_handle);
+        close_tracked_handle(&session, &m_ai_inst_changed_session_handle);
+        if (wait_before_reconnect()) {
+          break;
+        }
+        continue;
+      }
+      subscribed_topics_log += " | ";
+      subscribed_topics_log += logout_topic;
+    }
     AppendAIAssistantInfoLogLine("AI instruction mqtt subscribed topics: " +
                                  subscribed_topics_log);
     LOG(INFO) << "AI instruction mqtt subscribed topics: "
@@ -5227,6 +5335,11 @@ void RimeWithWeaselHandler::_RunAIAssistantInstructionChangedListener() {
       std::string payload;
       if (!ParseMqttPublishPacket(packet, &topic, &payload)) {
         continue;
+      }
+
+      if (!logout_topic.empty() && topic == logout_topic) {
+        _ClearAIAssistantLoginStateForLogout("mqtt topic=" + topic);
+        break;
       }
 
       bool should_refresh = false;

@@ -538,6 +538,14 @@ bool ParseMqttRemainingLength(const std::vector<uint8_t>& packet,
 
 }  // namespace
 
+std::string BuildAIAssistantLogoutTopic(const std::string& user_id) {
+  const std::string normalized_user_id = TrimAsciiWhitespace(user_id);
+  if (normalized_user_id.empty()) {
+    return std::string();
+  }
+  return "/mqtt/topic/sino/lamp/oauth/token/logout/" + normalized_user_id;
+}
+
 bool ResolveAIAssistantPermissionUpdateTopic(
     const AIAssistantConfig& config,
     const std::string& token,
