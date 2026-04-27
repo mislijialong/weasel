@@ -154,8 +154,6 @@ constexpr char kAIAssistantPermissionUpdateTopicPrefixObjectKey[] =
     "mqtt-topic-prefix";
 constexpr char kAIAssistantPermissionUpdateTopicPrefixMemberKey[] =
     "app-ins-upd";
-constexpr char kDefaultAIAssistantPermissionUpdateTopicPrefix[] =
-    "/mqtt/topic/sino/lamp/app:ins/permission/update";
 constexpr const char* kAllowedSystemCommandIds[] = {
     "jsq",       "calc",     "notepad",   "mspaint", "explorer",
     "txt",       "md",       "gh",        "bd",      "wb",
@@ -818,6 +816,10 @@ bool IsPlainInlineInstructionPrefixKey(const KeyEvent& key_event,
 
 std::wstring CaptureCurrentPreeditText(RimeSessionId session_id);
 
+bool IsPlainInlineEditingDigitKey(const KeyEvent& key_event);
+bool IsKeypadInlineEditingDigitKey(const KeyEvent& key_event);
+UINT NormalizeInlineEditingDigitKeycode(UINT keycode);
+
 struct InlineInstructionPromptSnapshot {
   std::wstring text;
   size_t cursor_pos = 0;
@@ -873,6 +875,44 @@ bool ShouldSuppressSpecialInstructionCandidates(
          IsSystemCommandInputText(input_text);
 }
 }  // namespace
+
+bool ShouldConsumeInlineEditingDigitKey(
+    const KeyEvent& key_event,
+    std::mutex& inline_mutex,
+    std::map<WeaselSessionId, InlineInstructionState>& inline_states,
+    std::mutex& injected_mutex,
+    std::map<WeaselSessionId, AIAssistantInjectedCandidateState>&
+        injected_candidates,
+    RimeSessionId session_id,
+    WeaselSessionId ipc_id) {
+  if (!IsPlainInlineEditingDigitKey(key_event) || session_id == 0 || ipc_id == 0) {
+    return false;
+  }
+
+  InlineInstructionState inline_state;
+  if (!GetInlineInstructionSnapshot(inline_mutex, inline_states, ipc_id,
+                                    &inline_state) ||
+      inline_state.phase != InlineInstructionPhase::kEditing) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(injected_mutex);
+    const auto it = injected_candidates.find(ipc_id);
+    if (it != injected_candidates.end() &&
+        GetInjectedCandidateVisibleCount(it->second) > 0) {
+      return false;
+    }
+  }
+
+  RIME_STRUCT(RimeContext, ctx);
+  bool has_rime_candidates = false;
+  if (rime_api->get_context(session_id, &ctx)) {
+    has_rime_candidates = ctx.menu.num_candidates > 0;
+    rime_api->free_context(&ctx);
+  }
+  return !has_rime_candidates;
+}
 
 bool SplitInlineInstructionText(const std::wstring& text,
                                 wchar_t prefix_char,
@@ -2137,6 +2177,32 @@ bool IsPlainCandidateSelectKey(const KeyEvent& key_event) {
   return (modifiers &
           (ibus::CONTROL_MASK | ibus::ALT_MASK | ibus::SUPER_MASK |
            ibus::HYPER_MASK | ibus::META_MASK)) == 0;
+}
+
+bool IsPlainInlineEditingDigitKey(const KeyEvent& key_event) {
+  if (key_event.mask & ibus::RELEASE_MASK) {
+    return false;
+  }
+  const auto modifiers = key_event.mask & ibus::MODIFIER_MASK;
+  if ((modifiers & (ibus::SHIFT_MASK | ibus::CONTROL_MASK | ibus::ALT_MASK |
+                    ibus::SUPER_MASK | ibus::HYPER_MASK | ibus::META_MASK)) !=
+      0) {
+    return false;
+  }
+  return (key_event.keycode >= '0' && key_event.keycode <= '9') ||
+         (key_event.keycode >= ibus::KP_0 && key_event.keycode <= ibus::KP_9);
+}
+
+bool IsKeypadInlineEditingDigitKey(const KeyEvent& key_event) {
+  return !(key_event.mask & ibus::RELEASE_MASK) &&
+         key_event.keycode >= ibus::KP_0 && key_event.keycode <= ibus::KP_9;
+}
+
+UINT NormalizeInlineEditingDigitKeycode(UINT keycode) {
+  if (keycode >= ibus::KP_0 && keycode <= ibus::KP_9) {
+    return static_cast<UINT>('0' + (keycode - ibus::KP_0));
+  }
+  return keycode;
 }
 
 bool TryResolveCandidateSelectIndex(const KeyEvent& key_event,
@@ -4528,7 +4594,9 @@ bool FetchAIAssistantPermissionUpdateTopicPrefix(
                                                      &parsed_prefix);
     parsed_prefix = TrimAsciiWhitespace(parsed_prefix);
     if (!has_configured_prefix || parsed_prefix.empty()) {
-      parsed_prefix = kDefaultAIAssistantPermissionUpdateTopicPrefix;
+      last_error =
+          "Front-end config does not contain mqtt-topic-prefix.app-ins-upd.";
+      continue;
     }
 
     *topic_prefix = parsed_prefix;
@@ -5484,10 +5552,30 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
       return TRUE;
     }
   }
-  Bool handled = rime_api->process_key(session_id, keyEvent.keycode,
-                                       expand_ibus_modifier(keyEvent.mask));
-  if (!is_inline_control_key &&
-      _TryHandleInlineInstructionKey(keyEvent, ipc_id, eat)) {
+  const bool should_consume_inline_digit =
+      ShouldConsumeInlineEditingDigitKey(
+          keyEvent, m_inline_instruction_mutex, m_inline_instruction_states,
+          m_ai_injected_candidates_mutex, m_ai_injected_candidates, session_id,
+          ipc_id);
+  KeyEvent effective_key_event = keyEvent;
+  if (should_consume_inline_digit &&
+      IsKeypadInlineEditingDigitKey(effective_key_event)) {
+    effective_key_event.keycode =
+        NormalizeInlineEditingDigitKeycode(effective_key_event.keycode);
+  }
+  Bool handled = rime_api->process_key(
+      session_id, effective_key_event.keycode,
+      expand_ibus_modifier(effective_key_event.mask));
+  const bool inline_key_handled =
+      !is_inline_control_key &&
+      _TryHandleInlineInstructionKey(effective_key_event, ipc_id, eat);
+  if (inline_key_handled) {
+    _UpdateUI(ipc_id);
+    m_active_session = ipc_id;
+    return TRUE;
+  }
+  if (should_consume_inline_digit) {
+    _Respond(ipc_id, eat);
     _UpdateUI(ipc_id);
     m_active_session = ipc_id;
     return TRUE;
