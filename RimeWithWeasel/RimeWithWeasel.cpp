@@ -834,6 +834,40 @@ std::wstring BuildInlineInstructionMockResult(
          + display_prompt + L"。这里先返回一段 mock 文本用于联调。";
 }
 
+std::wstring BuildInlineInstructionQueryText(
+    const AIPanelInstitutionOption& option,
+    const std::wstring& content_text) {
+  const std::wstring normalized_content =
+      TrimInlineInstructionPrompt(content_text);
+  std::wstring template_text =
+      TrimInlineInstructionPrompt(option.template_content);
+  if (template_text.empty()) {
+    return normalized_content;
+  }
+
+  const std::wstring placeholder = L"${content}";
+  size_t placeholder_pos = template_text.find(placeholder);
+  if (placeholder_pos == std::wstring::npos) {
+    if (normalized_content.empty()) {
+      return template_text;
+    }
+    if (!template_text.empty() && template_text.back() != L'\n' &&
+        template_text.back() != L'\r') {
+      template_text += L"\n";
+    }
+    template_text += normalized_content;
+    return template_text;
+  }
+
+  while (placeholder_pos != std::wstring::npos) {
+    template_text.replace(placeholder_pos, placeholder.size(),
+                          normalized_content);
+    placeholder_pos = template_text.find(
+        placeholder, placeholder_pos + normalized_content.size());
+  }
+  return template_text;
+}
+
 std::string BuildInlineInstructionChatRequestBody(
     const std::wstring& query_text,
     const std::string& token,
@@ -1218,8 +1252,10 @@ bool InvokeInlineInstructionChatStream(
                            WINHTTP_ADDREQ_FLAG_ADD |
                                WINHTTP_ADDREQ_FLAG_REPLACE);
 
+  const std::wstring request_query =
+      BuildInlineInstructionQueryText(option, query_text);
   const std::string request_body = BuildInlineInstructionChatRequestBody(
-      query_text, token, tenant_id, user_id);
+      request_query, token, tenant_id, user_id);
   if (!WinHttpSendRequest(request.get(), WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                           request_body.empty()
                               ? WINHTTP_NO_REQUEST_DATA
