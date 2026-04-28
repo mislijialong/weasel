@@ -365,11 +365,6 @@ bool FetchAIAssistantPermissionUpdateTopicPrefix(
       continue;
     }
 
-    AppendAIAssistantInfoLogLine("AI front-end config response endpoint=" +
-                                 wtou8(endpoint) + " body=" + body);
-    LOG(INFO) << "AI front-end config response endpoint="
-              << wtou8(endpoint) << " body=" << body;
-
     rapidjson::Document document;
     document.Parse(body.c_str(), body.size());
     if (document.HasParseError() || !document.IsObject()) {

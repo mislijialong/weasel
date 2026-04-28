@@ -267,6 +267,7 @@
     <ClCompile Include="InputContentStore.cpp" />
     <ClCompile Include="RimeWithWeasel.AIAuth.cpp" />
     <ClCompile Include="RimeWithWeasel.AIMqtt.cpp" />
+    <ClCompile Include="RimeWithWeasel.AIPanel.cpp" />
     <ClCompile Include="RimeWithWeasel.AIShared.cpp" />
     <ClCompile Include="RimeWithWeasel.InstructionLookup.cpp" />
     <ClCompile Include="RimeWithWeasel.cpp" />

@@ -50,6 +50,8 @@ struct AIAssistantInjectedCandidateState;
 
 RimeApi* GetWeaselRimeApi();
 
+constexpr UINT WM_AI_WEBVIEW_SYNC = WM_APP + 406;
+
 bool AppendLineToFile(const std::filesystem::path& file,
                       const std::string& line);
 void AppendInputContentInfoLogLine(const std::string& message);
@@ -65,6 +67,7 @@ void ClearAIAssistantUserInfoCache(const AIAssistantConfig& config);
 
 std::string TrimAsciiWhitespace(const std::string& input);
 std::string EscapeJsonString(const std::string& input);
+std::wstring UrlEncodeQueryComponent(const std::string& input);
 bool DecodeBase64String(const std::string& input, std::string* output);
 bool DecodeObfuscatedJsonString(const std::string& base64_text,
                                 rapidjson::Document* document,
@@ -83,6 +86,8 @@ bool ParseHttpUrlOrigin(const std::wstring& url,
 std::wstring BuildHttpOrigin(const std::wstring& scheme,
                              const std::wstring& host,
                              INTERNET_PORT port);
+std::wstring NormalizeReferencedContextText(
+    const std::wstring& context_text);
 
 struct ParsedWebSocketUrl {
   bool valid = false;

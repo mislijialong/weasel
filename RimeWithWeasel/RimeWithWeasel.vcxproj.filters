@@ -30,6 +30,9 @@
     <ClCompile Include="RimeWithWeasel.AIMqtt.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="RimeWithWeasel.AIPanel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="RimeWithWeasel.AIShared.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

@@ -248,6 +248,25 @@ std::string EscapeJsonString(const std::string& input) {
   return escaped;
 }
 
+std::wstring UrlEncodeQueryComponent(const std::string& input) {
+  static const wchar_t kHex[] = L"0123456789ABCDEF";
+  std::wstring output;
+  output.reserve(input.size() * 3);
+  for (unsigned char ch : input) {
+    const bool is_alnum =
+        (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+        (ch >= '0' && ch <= '9');
+    if (is_alnum || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+      output.push_back(static_cast<wchar_t>(ch));
+      continue;
+    }
+    output.push_back(L'%');
+    output.push_back(kHex[(ch >> 4) & 0x0F]);
+    output.push_back(kHex[ch & 0x0F]);
+  }
+  return output;
+}
+
 bool DecodeBase64String(const std::string& input, std::string* output) {
   if (!output) {
     return false;
@@ -327,9 +346,6 @@ bool DecodeObfuscatedJsonString(const std::string& base64_text,
   }
 
   const std::string json_utf8 = wtou8(original_text);
-  AppendAIAssistantInfoLogLine("AI front-end config decoded data: " +
-                               json_utf8);
-  LOG(INFO) << "AI front-end config decoded data: " << json_utf8;
   document->Parse(json_utf8.c_str(), json_utf8.size());
   if (document->HasParseError() || !document->IsObject()) {
     if (error_message) {
