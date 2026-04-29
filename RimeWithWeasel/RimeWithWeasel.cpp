@@ -3895,37 +3895,41 @@ bool RimeWithWeaselHandler::_EnsureAIAssistantLogin() {
       return true;
     }
 
-    std::string token;
-    std::string tenant_id;
-    std::string refresh_token;
-    std::string resolve_error;
-    if (!_ResolveAIAssistantLoginState(&token, &tenant_id, &refresh_token,
-                                       &resolve_error)) {
-      LOG(WARNING) << "AI ensure login: unable to resolve login state, error="
-                   << resolve_error;
-      _ForceAIAssistantRelogin();
-      return false;
-    }
+    const AIAssistantConfig config = m_ai_config;
+    std::thread([this, config]() {
+      std::string token;
+      std::string tenant_id;
+      std::string refresh_token;
+      std::string resolve_error;
+      if (!_ResolveAIAssistantLoginState(&token, &tenant_id, &refresh_token,
+                                         &resolve_error)) {
+        LOG(WARNING)
+            << "AI ensure login async: unable to resolve login state, error="
+            << resolve_error;
+        _ForceAIAssistantRelogin();
+        return;
+      }
 
-    std::string user_info_error;
-    int user_info_status_code = 0;
-    const bool user_info_refreshed = RefreshAIAssistantUserInfoCache(
-        m_ai_config, token, tenant_id, &user_info_error, &user_info_status_code);
-    if (user_info_refreshed) {
-      LOG(INFO) << "AI ensure login: user info cache refreshed on demand.";
-      _StartAIAssistantInstructionChangedListener();
-      return true;
-    }
+      std::string user_info_error;
+      int user_info_status_code = 0;
+      const bool user_info_refreshed = RefreshAIAssistantUserInfoCache(
+          config, token, tenant_id, &user_info_error, &user_info_status_code);
+      if (user_info_refreshed) {
+        LOG(INFO) << "AI ensure login async: user info cache refreshed.";
+        _StartAIAssistantInstructionChangedListener();
+        return;
+      }
 
-    if (!user_info_error.empty()) {
-      LOG(WARNING) << "AI ensure login: user info refresh failed: "
-                   << user_info_error;
-    }
-    if (user_info_status_code == 401) {
-      LOG(INFO) << "AI ensure login: auth invalid, restarting login flow.";
-      _ForceAIAssistantRelogin();
-      return false;
-    }
+      if (!user_info_error.empty()) {
+        LOG(WARNING) << "AI ensure login async: user info refresh failed: "
+                     << user_info_error;
+      }
+      if (user_info_status_code == 401) {
+        LOG(INFO)
+            << "AI ensure login async: auth invalid, restarting login flow.";
+        _ForceAIAssistantRelogin();
+      }
+    }).detach();
     return true;
   }
   _StartAIAssistantLoginFlow();
@@ -4785,42 +4789,18 @@ bool RimeWithWeaselHandler::_TryProcessAIAssistantTrigger(KeyEvent keyEvent,
   AppendAIAssistantContextDump(m_ai_config, context_source, target_hwnd,
                                prompt_context);
 
-  std::vector<AIPanelInstitutionOption> preloaded_institution_options;
-  bool institution_options_ready = false;
-  bool relogin_started = false;
-  std::string institution_error_message;
-  if (!_PrepareAIPanelInstitutionOptionsForOpen(
-          &preloaded_institution_options, &institution_options_ready,
-          &relogin_started, &institution_error_message)) {
-    if (relogin_started) {
-      LOG(INFO) << "AI panel open blocked because institution list returned "
-                   "401 and relogin was started.";
-    } else if (!institution_error_message.empty()) {
-      LOG(WARNING) << "AI panel open blocked: "
-                   << institution_error_message;
-    }
-    return true;
-  }
+  const std::wstring normalized_prompt_context =
+      NormalizeReferencedContextText(prompt_context);
+  const std::wstring status_text =
+      normalized_prompt_context.empty()
+          ? L"未检测到输入内容，请在前端面板中继续操作。"
+          : L"上下文已就绪，请在前端面板中发起请求。";
+  const std::vector<AIPanelInstitutionOption> cached_options =
+      m_ai_instructions.Snapshot();
+  const bool institution_options_ready = !cached_options.empty();
+  _OpenAIPanelAsync(ipc_id, target_hwnd, normalized_prompt_context, status_text,
+                    cached_options, institution_options_ready);
 
-  if (_OpenAIPanel(ipc_id, target_hwnd, &preloaded_institution_options,
-                   institution_options_ready)) {
-    const std::wstring normalized_prompt_context =
-        NormalizeReferencedContextText(prompt_context);
-    {
-      std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
-      m_ai_panel.context_text = normalized_prompt_context;
-    }
-    _ResetAIPanelOutput();
-    if (normalized_prompt_context.empty()) {
-      _SetAIPanelStatus(L"未检测到输入内容，请在前端面板中继续操作。");
-    } else {
-      _SetAIPanelStatus(L"上下文已就绪，请在前端面板中发起请求。");
-    }
-    return true;
-  }
-
-  LOG(WARNING)
-      << "AI panel window unavailable; skip sync fallback to avoid blocking.";
   return true;
 }
 

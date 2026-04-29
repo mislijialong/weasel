@@ -1111,6 +1111,35 @@ bool RimeWithWeaselHandler::_OpenAIPanel(WeaselSessionId ipc_id,
   return true;
 }
 
+void RimeWithWeaselHandler::_OpenAIPanelAsync(
+    WeaselSessionId ipc_id,
+    HWND target_hwnd,
+    const std::wstring& context_text,
+    const std::wstring& status_text,
+    const std::vector<AIPanelInstitutionOption>& initial_options,
+    bool institutions_ready,
+    const std::wstring& initial_selected_institution_id) {
+  std::thread([this, ipc_id, target_hwnd, context_text, status_text,
+               initial_options = std::move(initial_options), institutions_ready,
+               initial_selected_institution_id]() {
+    if (!_OpenAIPanel(ipc_id, target_hwnd, &initial_options, institutions_ready,
+                      initial_selected_institution_id)) {
+      LOG(WARNING)
+          << "AI panel window unavailable in async open; skip blocking fallback.";
+      return;
+    }
+
+    const std::wstring normalized_context =
+        NormalizeReferencedContextText(context_text);
+    {
+      std::lock_guard<std::mutex> lock(m_ai_panel_mutex);
+      m_ai_panel.context_text = normalized_context;
+    }
+    _ResetAIPanelOutput();
+    _SetAIPanelStatus(status_text);
+  }).detach();
+}
+
 void RimeWithWeaselHandler::_CloseAIPanel() {
   HWND panel_hwnd = nullptr;
   {

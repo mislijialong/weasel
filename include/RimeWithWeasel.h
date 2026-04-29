@@ -362,6 +362,14 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
                     bool institutions_ready = false,
                     const std::wstring& initial_selected_institution_id =
                         std::wstring());
+  void _OpenAIPanelAsync(WeaselSessionId ipc_id,
+                         HWND target_hwnd,
+                         const std::wstring& context_text,
+                         const std::wstring& status_text,
+                         const std::vector<AIPanelInstitutionOption>& initial_options,
+                         bool institutions_ready,
+                         const std::wstring& initial_selected_institution_id =
+                             std::wstring());
   void _CloseAIPanel();
   void _DestroyAIPanel();
   void _SetAIPanelStatus(const std::wstring& status_text);
